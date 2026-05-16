@@ -1,0 +1,93 @@
+{
+  "name": "tokentracker-vscode",
+  "displayName": "TokenTracker",
+  "description": "Publishes local Codex and Claude usage signals to Home Assistant over MQTT.",
+  "version": "1.1.0",
+  "publisher": "snille",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:tokentracker.publishNow",
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "TokenTracker",
+      "properties": {
+        "tokentracker.mqtt.url": {
+          "type": "string",
+          "default": "mqtt://homeassistant.local:1883",
+          "description": "MQTT broker URL."
+        },
+        "tokentracker.mqtt.username": {
+          "type": "string",
+          "default": "tokentracker",
+          "description": "MQTT username."
+        },
+        "tokentracker.mqtt.password": {
+          "type": "string",
+          "default": "",
+          "description": "MQTT password."
+        },
+        "tokentracker.mqtt.discoveryPrefix": {
+          "type": "string",
+          "default": "homeassistant",
+          "description": "Home Assistant MQTT discovery prefix."
+        },
+        "tokentracker.mqtt.statePrefix": {
+          "type": "string",
+          "default": "tokentracker",
+          "description": "MQTT state topic prefix."
+        },
+        "tokentracker.publishIntervalSeconds": {
+          "type": "number",
+          "default": 60,
+          "minimum": 10,
+          "description": "How often to publish usage data."
+        },
+        "tokentracker.codex.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Publish local Codex usage from ~/.codex/state_5.sqlite."
+        },
+        "tokentracker.claude.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Publish local Claude Code usage from ~/.claude project JSONL files."
+        },
+        "tokentracker.version": {
+          "type": "string",
+          "default": "1.1.0",
+          "readOnly": true,
+          "description": "Installed TokenTracker extension version."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "tokentracker.publishNow",
+        "title": "TokenTracker: Publish Now"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/vscode": "^1.95.0",
+    "typescript": "^5.7.0",
+    "@vscode/vsce": "^3.2.0"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.0",
+    "sqlite3": "^5.1.7"
+  }
+}

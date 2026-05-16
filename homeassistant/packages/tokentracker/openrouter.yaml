@@ -1,0 +1,167 @@
+# TokenTracker HA package version: 1.1.0
+# OpenRouter statistics for the Token Tracker.
+
+rest:
+  - resource: https://openrouter.ai/api/v1/credits
+    method: GET
+    scan_interval: 300
+    headers:
+      Authorization: !secret openrouter_management_bearer
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Credits Raw
+        unique_id: tokentracker_openrouter_credits_raw
+        value_template: "{{ value_json.data.total_credits | default('unavailable') }}"
+        json_attributes_path: "$.data"
+        json_attributes:
+          - total_credits
+          - total_usage
+
+  - resource: https://openrouter.ai/api/v1/key
+    method: GET
+    scan_interval: 300
+    headers:
+      Authorization: !secret openrouter_api_bearer
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Key Raw
+        unique_id: tokentracker_openrouter_key_raw
+        value_template: "{{ value_json.data.label | default('unavailable') }}"
+        json_attributes_path: "$.data"
+        json_attributes:
+          - label
+          - limit
+          - limit_remaining
+          - limit_reset
+          - usage
+          - usage_daily
+          - usage_weekly
+          - usage_monthly
+          - is_free_tier
+          - is_management_key
+
+template:
+  - sensor:
+      - name: OpenRouter Balance Remaining
+        unique_id: tokentracker_openrouter_balance_remaining
+        state: >
+          {% set total = state_attr('sensor.openrouter_credits_raw', 'total_credits') | float(0) %}
+          {% set used = state_attr('sensor.openrouter_credits_raw', 'total_usage') | float(0) %}
+          {{ [total - used, 0] | max | round(4) }}
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:cash
+
+      - name: OpenRouter Total Credits
+        unique_id: tokentracker_openrouter_total_credits
+        state: "{{ state_attr('sensor.openrouter_credits_raw', 'total_credits') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:cash-plus
+
+      - name: OpenRouter Total Usage
+        unique_id: tokentracker_openrouter_total_usage
+        state: "{{ state_attr('sensor.openrouter_credits_raw', 'total_usage') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:cash-minus
+
+      - name: OpenRouter Usage Percent
+        unique_id: tokentracker_openrouter_usage_percent
+        state: >
+          {% set total = state_attr('sensor.openrouter_credits_raw', 'total_credits') | float(0) %}
+          {% set used = state_attr('sensor.openrouter_credits_raw', 'total_usage') | float(0) %}
+          {% if total > 0 %}
+            {{ ([used / total * 100, 100] | min) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:percent
+
+      - name: OpenRouter Key Limit Remaining
+        unique_id: tokentracker_openrouter_key_limit_remaining
+        availability: "{{ state_attr('sensor.openrouter_key_raw', 'limit_remaining') is number }}"
+        state: >
+          {{ state_attr('sensor.openrouter_key_raw', 'limit_remaining') | float(0) | round(4) }}
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:gauge
+
+      - name: OpenRouter Key Total Usage
+        unique_id: tokentracker_openrouter_key_total_usage
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:cash-minus
+
+      - name: OpenRouter Key Usage Percent
+        unique_id: tokentracker_openrouter_key_usage_percent
+        state: >
+          {% set limit = state_attr('sensor.openrouter_key_raw', 'limit') %}
+          {% set remaining = state_attr('sensor.openrouter_key_raw', 'limit_remaining') %}
+          {% if limit is number and remaining is number and limit > 0 %}
+            {{ ([((limit - remaining) / limit) * 100, 100] | min) | round(1) }}
+          {% else %}
+            {{ states('sensor.openrouter_usage_percent') | float(0) | round(1) }}
+          {% endif %}
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:percent
+
+      - name: OpenRouter Key Limit
+        unique_id: tokentracker_openrouter_key_limit
+        availability: "{{ state_attr('sensor.openrouter_key_raw', 'limit') is number }}"
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'limit') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:speedometer
+
+      - name: OpenRouter Cost Today
+        unique_id: tokentracker_openrouter_cost_today
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage_daily') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:calendar-today
+
+      - name: OpenRouter Cost Week
+        unique_id: tokentracker_openrouter_cost_week
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage_weekly') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:calendar-week
+
+      - name: OpenRouter Cost Month
+        unique_id: tokentracker_openrouter_cost_month
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage_monthly') | float(0) | round(4) }}"
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:calendar-month
+
+      - name: OpenRouter Tokens Today
+        unique_id: tokentracker_openrouter_tokens_today
+        state: "0"
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+
+  - sensor:
+      - name: OpenRouter Key Label
+        unique_id: tokentracker_openrouter_key_label
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'label') | default('', true) }}"
+        icon: mdi:key-outline
+
+      - name: OpenRouter Limit Reset
+        unique_id: tokentracker_openrouter_limit_reset
+        state: "{{ state_attr('sensor.openrouter_key_raw', 'limit_reset') | default('', true) }}"
+        icon: mdi:calendar-sync

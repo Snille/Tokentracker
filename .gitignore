@@ -1,0 +1,8 @@
+.ai-tokens
+.ha-token
+Info.txt
+*.log
+vscode-extension/node_modules/
+vscode-extension/dist/
+vscode-extension/*.vsix
+vscode-extension/.vscode/settings.json

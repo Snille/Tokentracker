@@ -1,0 +1,1493 @@
+# Shared Wi-Fi, API and OTA settings imported from a common base file.
+<<: !include base/base-iot.yaml
+
+# Substitutions: simple key/value tokens reused throughout the YAML via ${...}.
+substitutions:
+  name: round-token-tracker
+  friendly_name: Storstugan - Office - Token Tracker
+
+  # Home Assistant entity IDs that provide the account values (mirrored locally as sensors below).
+  openai_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_today
+  anthropic_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_today
+  openrouter_tokens_entity: sensor.openrouter_tokens_today
+  openrouter_balance_entity: sensor.openrouter_balance_remaining
+  openrouter_usage_percent_entity: sensor.openrouter_usage_percent
+  openwebui_tokens_today_entity: sensor.openwebui_tokens_today
+  openwebui_chats_today_entity: sensor.openwebui_chats_today
+  openwebui_active_users_entity: sensor.openwebui_active_users
+  openwebui_total_users_entity: sensor.openwebui_total_users
+  openwebui_top_model_entity: sensor.openwebui_top_model
+
+  # Maximum values for the HA config sliders below, expressed in ktokens
+  # (1 ktoken = 1000 tokens). These only control how far the sliders can be
+  # dragged; the current limit values are stored/restored by the number entities.
+  codex_max_ktokens: "250000"
+  claude_max_ktokens: "250000"
+  openwebui_max_ktokens: "1250"
+
+# Core ESPHome device configuration. Includes PlatformIO build flags for the
+# ESP32-S3 (240 MHz CPU, 80 MHz flash in DIO mode) and an on_boot hook that
+# auto-detects and initialises the QMI8658 IMU.
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.f_flash: 80000000L
+    board_build.f_cpu: 240000000L
+  project:
+    name: snille.token-tracker
+    version: "1.7.5"
+  on_boot:
+    # Priority -100 = runs late, after hardware components have been set up.
+    priority: -100
+    then:
+      - logger.log:
+          level: INFO
+          tag: tokentracker
+          format: "TokenTracker ESPHome build 1.7.5: separate overview screen interval"
+      - lambda: |-
+          float brightness_percent = id(display_brightness_percent).state;
+          if (isnan(brightness_percent)) brightness_percent = 70.0f;
+          if (brightness_percent < 1.0f) brightness_percent = 1.0f;
+          if (brightness_percent > 100.0f) brightness_percent = 100.0f;
+          id(main_display).set_brightness((uint8_t) (brightness_percent * 2.55f));
+
+          // Probe both possible I2C addresses for the QMI8658 IMU. Some board
+          // revisions wire the chip's SA0 pin differently, so try 0x6B first
+          // and fall back to 0x6A.
+          auto who_6b = id(qmi8658_i2c).read_byte(0x00);
+          auto who_6a = id(qmi8658_i2c_alt).read_byte(0x00);
+          if (who_6b.has_value()) {
+            id(qmi8658_use_alt_address) = false;
+            ESP_LOGI("tokentracker", "QMI8658 probe 0x6B WHO_AM_I=0x%02X", *who_6b);
+          } else if (who_6a.has_value()) {
+            id(qmi8658_use_alt_address) = true;
+            ESP_LOGI("tokentracker", "QMI8658 probe 0x6A WHO_AM_I=0x%02X", *who_6a);
+          } else {
+            // Neither address responded -- IMU features will be unavailable.
+            ESP_LOGE("tokentracker", "QMI8658 WHO_AM_I read failed at both 0x6B and 0x6A");
+            return;
+          }
+          // Configure the IMU control registers for accel + gyro operation.
+          if (id(qmi8658_use_alt_address)) {
+            id(qmi8658_i2c_alt).write_byte(0x02, 0x40);  // CTRL1: address auto-increment, little-endian data.
+            id(qmi8658_i2c_alt).write_byte(0x03, 0x26);  // CTRL2: accel +/-8g, 125Hz.
+            id(qmi8658_i2c_alt).write_byte(0x04, 0x56);  // CTRL3: gyro +/-512dps, 125Hz.
+            id(qmi8658_i2c_alt).write_byte(0x08, 0x03);  // CTRL7: enable accel + gyro.
+            ESP_LOGI("tokentracker", "QMI8658 configured through generic i2c_device at 0x6A");
+          } else {
+            id(qmi8658_i2c).write_byte(0x02, 0x40);
+            id(qmi8658_i2c).write_byte(0x03, 0x26);
+            id(qmi8658_i2c).write_byte(0x04, 0x56);
+            id(qmi8658_i2c).write_byte(0x08, 0x03);
+            ESP_LOGI("tokentracker", "QMI8658 configured through generic i2c_device at 0x6B");
+          }
+
+# ESP32-S3 platform settings: 16 MB flash, ESP-IDF framework with a few
+# performance-tuning sdkconfig overrides (240 MHz CPU, 64 KB / 64-byte data cache).
+esp32:
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+
+# Octal PSRAM at 80 MHz - needed to hold the 466x466 RGB framebuffer.
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Default ESPHome logger over UART/USB. Keep generic sensor log lines quiet.
+logger:
+  logs:
+    sensor: WARN
+
+# Built-in HTTP server exposing entities and OTA on port 80.
+web_server:
+
+# External components pulled from GitHub. The CST9217 capacitive-touch driver
+# is not part of the upstream ESPHome distribution.
+external_components:
+  - source:
+      type: git
+      url: https://github.com/shelson/esphome-cst9217
+
+# Globals = persistent runtime variables shared between lambdas.
+# Those with restore_value: true are saved to flash across reboots.
+globals:
+  # Index 0..5 of the screen currently displayed (clock / Codex / Claude / OpenRouter / Open WebUI / overview).
+  - id: current_screen
+    type: int
+    restore_value: true
+    initial_value: "0"
+  # millis() timestamp of the last automatic screen change.
+  - id: last_auto_advance_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  # Tap gesture pauses/resumes the auto-rotate countdown without changing the
+  # Home Assistant Auto Rotate Screens switch.
+  - id: auto_rotate_paused
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  # Touch swipe tracking: start and most recent touch coordinates.
+  - id: swipe_start_x
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: swipe_start_y
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: swipe_last_x
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: swipe_last_y
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: touch_swipe_handled
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: touch_is_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: touch_started_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  # User-selected base rotation in 90-degree steps (0..3). Persisted across reboots.
+  - id: display_rotation_steps
+    type: int
+    restore_value: true
+    initial_value: "0"
+  # Last rotation actually applied to the display driver (-1 = none yet, forces a sync on first frame).
+  - id: applied_display_rotation_steps
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  # Additional rotation derived from the IMU when auto-orientation is enabled (0..3).
+  - id: auto_orientation_steps
+    type: int
+    restore_value: false
+    initial_value: "0"
+  # Paint a black frame this many times at boot to avoid showing uninitialised framebuffer contents.
+  - id: startup_black_frames
+    type: int
+    restore_value: false
+    initial_value: "3"
+  # Top-button state machine variables (press timestamp, click counter, hold-handled flag, etc.).
+  - id: button_press_started_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+  - id: button_hold_handled
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: button_woke_display
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # Set in on_boot to remember which I2C address the IMU responded on.
+  - id: qmi8658_use_alt_address
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # Throttles IMU sensor publishing to Home Assistant (10 s cadence, see interval below).
+  - id: qmi8658_last_publish_ms
+    type: uint32_t
+    restore_value: false
+    initial_value: "0"
+
+# Pull the wall-clock time from Home Assistant (no RTC on this board).
+time:
+  - platform: homeassistant
+    id: home_assistant_time
+
+# Single I2C bus shared by the IMU. scan: false skips the boot-time bus scan
+# since we probe the IMU manually in on_boot.
+i2c:
+  - id: bus_a
+    scl: GPIO14
+    sda: GPIO15
+    scan: false
+
+# Generic i2c_device entries used to talk to the IMU without a dedicated
+# component. Both addresses are declared so on_boot can pick the live one.
+i2c_device:
+  - id: qmi8658_i2c
+    i2c_id: bus_a
+    address: 0x6B
+  - id: qmi8658_i2c_alt
+    i2c_id: bus_a
+    address: 0x6A
+
+# Quad-SPI bus to the CO5300 round display. Quad mode uses four data lines
+# for higher throughput than standard 1-bit SPI.
+spi:
+  - id: display_qspi
+    type: quad
+    clk_pin: GPIO38
+    data_pins:
+      - GPIO4
+      - GPIO5
+      - GPIO6
+      - GPIO7
+
+# Google Fonts pulled at build time. Glyph lists are pruned to what we
+# actually render to keep the compiled font tables small.
+font:
+  - file: gfonts://Inter@700
+    id: font_title
+    size: 38
+    glyphs: "!%()+,-_.:/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖabcdefghijklmnopqrstuvwxyzåäö$€ "
+  - file: gfonts://Inter@600
+    id: font_value
+    size: 58
+    glyphs: "!%()+,-_.:/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖabcdefghijklmnopqrstuvwxyzåäö$€ "
+  - file: gfonts://Inter@500
+    id: font_label
+    size: 24
+    glyphs: "!%()+,-_.:/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖabcdefghijklmnopqrstuvwxyzåäö$€ "
+  - file: gfonts://Inter@600
+    id: font_clock
+    size: 74
+    glyphs: "0123456789:"
+  - file: gfonts://Inter@600
+    id: font_small_value
+    size: 30
+    glyphs: "!%()+,-_.:/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖabcdefghijklmnopqrstuvwxyzåäö$€ "
+  - file: gfonts://Inter@500
+    id: font_tiny
+    size: 18
+    glyphs: "!%()+,-_.:/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖabcdefghijklmnopqrstuvwxyzåäö$€ "
+
+# Brand logos in two sizes: 118x118 for full-screen views, 52x52 for overview tiles.
+image:
+  defaults:
+    type: rgb565
+    transparency: alpha_channel
+    resize: 118x118
+  images:
+    - file: images/tt-openai-white.png
+      id: img_openai
+    - file: images/tt-anthropic-white.png
+      id: img_anthropic
+    - file: images/tt-openrouter-white.png
+      id: img_openrouter
+    - file: images/tt-openwebui-white.png
+      id: img_openwebui
+    - file: images/tt-openai-white.png
+      id: img_openai_compact
+      resize: 88x88
+    - file: images/tt-anthropic-white.png
+      id: img_anthropic_compact
+      resize: 88x88
+    - file: images/tt-openrouter-white.png
+      id: img_openrouter_compact
+      resize: 88x88
+    - file: images/tt-openwebui-white.png
+      id: img_openwebui_compact
+      resize: 88x88
+    - file: images/tt-openai-white.png
+      id: img_openai_small
+      resize: 52x52
+    - file: images/tt-anthropic-white.png
+      id: img_anthropic_small
+      resize: 52x52
+    - file: images/tt-openrouter-white.png
+      id: img_openrouter_small
+      resize: 52x52
+    - file: images/tt-openwebui-white.png
+      id: img_openwebui_small
+      resize: 52x52
+
+# Sensors: Home Assistant entries mirror raw usage values locally. Daily goals,
+# tokens-left and usage percentages are computed on the device.
+sensor:
+  - platform: homeassistant
+    id: openai_tokens_today
+    entity_id: ${openai_tokens_entity}
+  - platform: homeassistant
+    id: anthropic_tokens_today
+    entity_id: ${anthropic_tokens_entity}
+  - platform: homeassistant
+    id: openrouter_tokens_today
+    entity_id: ${openrouter_tokens_entity}
+  - platform: homeassistant
+    id: openrouter_balance_remaining
+    entity_id: ${openrouter_balance_entity}
+  - platform: homeassistant
+    id: openrouter_usage_percent
+    entity_id: ${openrouter_usage_percent_entity}
+  - platform: homeassistant
+    id: openwebui_tokens_today
+    entity_id: ${openwebui_tokens_today_entity}
+  - platform: homeassistant
+    id: openwebui_chats_today
+    entity_id: ${openwebui_chats_today_entity}
+  - platform: homeassistant
+    id: openwebui_active_users
+    entity_id: ${openwebui_active_users_entity}
+  - platform: homeassistant
+    id: openwebui_total_users
+    entity_id: ${openwebui_total_users_entity}
+  # Template sensors for the QMI8658 IMU. update_interval: never means values
+  # only change when publish_state() is called from the 1s interval lambda.
+  # Kept internal so ESPHome does not dump seven noisy sensor status lines.
+  - platform: template
+    id: imu_accel_x
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: g
+    accuracy_decimals: 3
+    update_interval: never
+  - platform: template
+    id: imu_accel_y
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: g
+    accuracy_decimals: 3
+    update_interval: never
+  - platform: template
+    id: imu_accel_z
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: g
+    accuracy_decimals: 3
+    update_interval: never
+  - platform: template
+    id: imu_gyro_x
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: °/s
+    accuracy_decimals: 3
+    update_interval: never
+  - platform: template
+    id: imu_gyro_y
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: °/s
+    accuracy_decimals: 3
+    update_interval: never
+  - platform: template
+    id: imu_gyro_z
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: °/s
+    accuracy_decimals: 3
+    update_interval: never
+  - platform: template
+    id: imu_temperature
+    internal: true
+    entity_category: diagnostic
+    unit_of_measurement: °C
+    accuracy_decimals: 1
+    update_interval: never
+
+# Top-model string sensor from Open WebUI - needs text_sensor since the value
+# is a model id like "vendor/Model-Name:tag" rather than a number.
+text_sensor:
+  - platform: homeassistant
+    id: openwebui_top_model
+    entity_id: ${openwebui_top_model_entity}
+
+# User-tunable number entities controlling auto-rotate cadence.
+number:
+  - platform: template
+    id: screen_interval_seconds
+    name: Screen Interval
+    icon: mdi:timer-outline
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 3
+    max_value: 120
+    step: 1
+    mode: slider
+    initial_value: 10
+    unit_of_measurement: s
+
+  - platform: template
+    id: overview_screen_interval_seconds
+    name: Overview Screen Interval
+    icon: mdi:view-dashboard-outline
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 3
+    max_value: 300
+    step: 1
+    mode: slider
+    initial_value: 20
+    unit_of_measurement: s
+
+  - platform: template
+    id: display_brightness_percent
+    name: Display Brightness Percent
+    icon: mdi:brightness-6
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 1
+    max_value: 100
+    step: 1
+    mode: slider
+    initial_value: 70
+    unit_of_measurement: "%"
+    set_action:
+      - lambda: |-
+          float brightness_percent = x;
+          if (brightness_percent < 1.0f) brightness_percent = 1.0f;
+          if (brightness_percent > 100.0f) brightness_percent = 100.0f;
+          id(main_display).set_brightness((uint8_t) (brightness_percent * 2.55f));
+
+  - platform: template
+    id: codex_daily_token_goal
+    name: Codex Max
+    icon: mdi:target
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: ${codex_max_ktokens}
+    step: 100
+    mode: slider
+    initial_value: 50000
+    unit_of_measurement: ktokens
+
+  - platform: template
+    id: claude_daily_token_goal
+    name: Claude Max
+    icon: mdi:target
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: ${claude_max_ktokens}
+    step: 100
+    mode: slider
+    initial_value: 50000
+    unit_of_measurement: ktokens
+
+  - platform: template
+    id: openwebui_daily_token_goal
+    name: WebUI Max
+    icon: mdi:target
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: ${openwebui_max_ktokens}
+    step: 1
+    mode: slider
+    initial_value: 50
+    unit_of_measurement: ktokens
+
+# Drop-down selector for manual base display rotation. The set_action maps the
+# chosen string to a 0..3 step count consumed by the display lambda.
+select:
+  - platform: template
+    id: display_rotation_select
+    name: Display Rotation
+    icon: mdi:screen-rotation
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    options:
+      - "0°"
+      - "90°"
+      - "180°"
+      - "270°"
+    initial_option: "0°"
+    set_action:
+      - lambda: |-
+          if (x == "0°") id(display_rotation_steps) = 0;
+          else if (x == "90°") id(display_rotation_steps) = 1;
+          else if (x == "180°") id(display_rotation_steps) = 2;
+          else id(display_rotation_steps) = 3;
+      - component.update: main_display
+
+# Buttons exposed to Home Assistant: device-level (reboot / factory reset) and
+# UI-level next/previous which skip past any disabled screens.
+button:
+  - platform: restart
+    id: reboot_btn
+    name: Reboot Device
+    icon: mdi:restart
+    entity_category: config
+
+  - platform: factory_reset
+    id: factory_reset_btn
+    name: Factory Reset
+    icon: mdi:factory
+    entity_category: config
+
+  - platform: template
+    id: next_screen_btn
+    name: Next Screen
+    icon: mdi:chevron-right
+    on_press:
+      - lambda: |-
+          // Local helper: is this screen currently allowed by its toggle switch?
+          auto enabled = [](int screen) -> bool {
+            if (screen == 0) return id(show_clock).state;
+            if (screen == 1) return id(show_openai).state;
+            if (screen == 2) return id(show_anthropic).state;
+            if (screen == 3) return id(show_openrouter).state;
+            if (screen == 4) return id(show_openwebui).state;
+            if (screen == 5) return id(show_overview).state;
+            return false;
+          };
+          // Advance forward, stopping on the first enabled screen.
+          for (int i = 0; i < 6; i++) {
+            id(current_screen) = (id(current_screen) + 1) % 6;
+            if (enabled(id(current_screen))) break;
+          }
+          id(last_auto_advance_ms) = millis();
+      - component.update: main_display
+
+  - platform: template
+    id: previous_screen_btn
+    name: Previous Screen
+    icon: mdi:chevron-left
+    on_press:
+      - lambda: |-
+          auto enabled = [](int screen) -> bool {
+            if (screen == 0) return id(show_clock).state;
+            if (screen == 1) return id(show_openai).state;
+            if (screen == 2) return id(show_anthropic).state;
+            if (screen == 3) return id(show_openrouter).state;
+            if (screen == 4) return id(show_openwebui).state;
+            if (screen == 5) return id(show_overview).state;
+            return false;
+          };
+          // +5 mod 6 == -1 mod 6: walk one step backwards through the screens.
+          for (int i = 0; i < 6; i++) {
+            id(current_screen) = (id(current_screen) + 5) % 6;
+            if (enabled(id(current_screen))) break;
+          }
+          id(last_auto_advance_ms) = millis();
+      - component.update: main_display
+
+# Switches grouped into: behaviour toggles (auto_rotate, display_enabled,
+# auto_orientation), per-screen visibility toggles, and a GPIO switch for the
+# onboard speaker amp.
+switch:
+  - platform: template
+    id: auto_rotate
+    name: Auto Rotate Screens
+    icon: mdi:rotate-360
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    turn_on_action:
+      - lambda: |-
+          id(auto_rotate_paused) = false;
+          id(last_auto_advance_ms) = millis();
+      - component.update: main_display
+    turn_off_action:
+      - lambda: |-
+          id(auto_rotate_paused) = false;
+      - component.update: main_display
+
+  - platform: template
+    id: display_enabled
+    name: Display Enabled
+    icon: mdi:monitor
+    entity_category: config
+    optimistic: true
+    restore_mode: ALWAYS_ON
+
+  - platform: template
+    id: show_clock
+    name: Show Clock
+    icon: mdi:clock-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    id: show_openai
+    name: Show Codex
+    icon: mdi:robot-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    id: show_anthropic
+    name: Show Claude Code
+    icon: mdi:robot-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    id: show_openrouter
+    name: Show OpenRouter
+    icon: mdi:router-wireless
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    id: show_overview
+    name: Show Overview
+    icon: mdi:view-grid-outline
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    id: show_openwebui
+    name: Show Open WebUI
+    icon: mdi:web
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+
+  - platform: template
+    id: auto_orientation
+    name: Auto Orientation
+    icon: mdi:phone-rotate-landscape
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: gpio
+    name: Speaker Enable
+    icon: mdi:speaker
+    entity_category: config
+    pin: GPIO46
+    restore_mode: RESTORE_DEFAULT_ON
+
+# Top button on GPIO0 (also the boot-strap pin; we explicitly silence the
+# warning). The press/release handlers implement click + long-hold handling
+# in conjunction with the 100 ms interval below.
+# Single click pauses/resumes auto-rotate and long hold toggles the display.
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO0
+      mode: INPUT_PULLUP
+      ignore_strapping_warning: true
+      inverted: true
+    id: top_button
+    name: Top Button
+    on_press:
+      - lambda: |-
+          // Record press start; reset hold/wake flags ready for this gesture.
+          id(button_press_started_ms) = millis();
+          id(button_hold_handled) = false;
+          id(button_woke_display) = false;
+          // If display is currently off, treat this press purely as a wake event
+          // and do not act on it as a click.
+          if (!id(display_enabled).state) {
+            ESP_LOGI("tokentracker", "Top button wake display");
+            id(display_enabled).turn_on();
+            id(main_display).update();
+            id(button_woke_display) = true;
+            id(button_hold_handled) = true;
+          }
+          ESP_LOGI("tokentracker", "Top button press started");
+    on_release:
+      - lambda: |-
+          const uint32_t now = millis();
+          const uint32_t held_ms = id(button_press_started_ms) == 0 ? 0 : now - id(button_press_started_ms);
+          ESP_LOGI("tokentracker", "Top button released after %u ms", held_ms);
+          id(button_press_started_ms) = 0;
+          // Skip click processing if the press was already consumed (wake or
+          // long-hold), or if it was held long enough to count as a hold.
+          if (id(button_woke_display) || id(button_hold_handled) || held_ms >= 800) {
+            return;
+          }
+          if (id(auto_rotate).state) {
+            id(auto_rotate_paused) = !id(auto_rotate_paused);
+            if (!id(auto_rotate_paused)) id(last_auto_advance_ms) = now;
+            ESP_LOGI("tokentracker", "Top button click -> auto-rotate %s", id(auto_rotate_paused) ? "paused" : "resumed");
+          } else {
+            ESP_LOGI("tokentracker", "Top button click ignored: auto-rotate switch is off");
+          }
+          id(main_display).update();
+
+# Periodic tasks. Three independent intervals:
+#   1) 100 ms - button hold detection.
+#   2) 1 s    - IMU read + auto-orientation handling.
+#   3) 1 s    - auto-rotate of screens.
+interval:
+  - interval: 100ms
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          // Detect a long hold (>=800 ms) while button is still pressed.
+          if (id(top_button).state && id(button_press_started_ms) != 0 && !id(button_hold_handled)) {
+            const uint32_t held_ms = now - id(button_press_started_ms);
+            if (held_ms >= 800) {
+              ESP_LOGI("tokentracker", "Top button hold -> toggle display");
+              if (id(display_enabled).state) {
+                id(display_enabled).turn_off();
+              } else {
+                id(display_enabled).turn_on();
+              }
+              id(main_display).update();
+              id(button_hold_handled) = true;
+            }
+          }
+
+  # Read the IMU once per second and run the auto-orientation classifier based
+  # on gravity vector direction.
+  - interval: 1s
+    then:
+      - lambda: |-
+          const uint32_t now_ms = millis();
+          float temperature = NAN;
+          float x = NAN;
+          float y = NAN;
+          float z = NAN;
+          float gx = NAN;
+          float gy = NAN;
+          float gz = NAN;
+
+          // Bulk-read 14 bytes starting at register 0x33: temp(2) + accel xyz(6) + gyro xyz(6).
+          uint8_t qmi_data[14];
+          auto qmi_err = id(qmi8658_use_alt_address)
+            ? id(qmi8658_i2c_alt).read_register(0x33, qmi_data, sizeof(qmi_data))
+            : id(qmi8658_i2c).read_register(0x33, qmi_data, sizeof(qmi_data));
+          if (qmi_err == esphome::i2c::ERROR_OK) {
+            // Combine LSB+MSB into a signed 16-bit value (little-endian).
+            auto raw16 = [](uint8_t lo, uint8_t hi) -> int16_t {
+              return (int16_t) ((uint16_t) lo | ((uint16_t) hi << 8));
+            };
+            const int16_t raw_temp = raw16(qmi_data[0], qmi_data[1]);
+            const int16_t raw_ax = raw16(qmi_data[2], qmi_data[3]);
+            const int16_t raw_ay = raw16(qmi_data[4], qmi_data[5]);
+            const int16_t raw_az = raw16(qmi_data[6], qmi_data[7]);
+            const int16_t raw_gx = raw16(qmi_data[8], qmi_data[9]);
+            const int16_t raw_gy = raw16(qmi_data[10], qmi_data[11]);
+            const int16_t raw_gz = raw16(qmi_data[12], qmi_data[13]);
+            // Scale according to the configured full-scale ranges:
+            //   temp: 1/256 degC per LSB
+            //   accel: +/-8g -> 4096 LSB/g
+            //   gyro:  +/-512dps -> 64 LSB/dps
+            temperature = raw_temp / 256.0f;
+            x = raw_ax / 4096.0f;
+            y = raw_ay / 4096.0f;
+            z = raw_az / 4096.0f;
+            gx = raw_gx / 64.0f;
+            gy = raw_gy / 64.0f;
+            gz = raw_gz / 64.0f;
+
+            // Publish to HA at most every 10 s to avoid spamming the API.
+            if (id(qmi8658_last_publish_ms) == 0 || now_ms - id(qmi8658_last_publish_ms) >= 10000) {
+              id(qmi8658_last_publish_ms) = now_ms;
+              id(imu_temperature).publish_state(temperature);
+              id(imu_accel_x).publish_state(x);
+              id(imu_accel_y).publish_state(y);
+              id(imu_accel_z).publish_state(z);
+              id(imu_gyro_x).publish_state(gx);
+              id(imu_gyro_y).publish_state(gy);
+              id(imu_gyro_z).publish_state(gz);
+            }
+          } else {
+            ESP_LOGW("tokentracker", "QMI8658 data read failed: %d", (int) qmi_err);
+          }
+
+          // Auto-orientation disabled -> reset any applied offset and exit.
+          if (!id(auto_orientation).state) {
+            if (id(auto_orientation_steps) != 0) {
+              id(auto_orientation_steps) = 0;
+              id(main_display).update();
+            }
+            return;
+          }
+          if (isnan(x) || isnan(y)) {
+            ESP_LOGW("tokentracker", "Auto orientation skipped: IMU acceleration is NaN");
+            return;
+          }
+
+          // Dead zone near 0g on both axes (device lying flat) - keep last orientation.
+          const float ax = fabsf(x);
+          const float ay = fabsf(y);
+          if (ax < 0.45f && ay < 0.45f) return;
+
+          // Pick the dominant gravity axis to determine which edge is "down".
+          int detected = id(auto_orientation_steps);
+          if (ax > ay) {
+            detected = x > 0.0f ? 1 : 3;
+          } else {
+            detected = y > 0.0f ? 2 : 0;
+          }
+
+          // Apply only on changes, to avoid redundant redraws.
+          if (detected != id(auto_orientation_steps)) {
+            ESP_LOGI("tokentracker", "Auto orientation step changed %d -> %d (x=%.3f y=%.3f)", id(auto_orientation_steps), detected, x, y);
+            id(auto_orientation_steps) = detected;
+            id(main_display).update();
+          }
+
+  # Auto-rotate carousel: single screens use Screen Interval, overview uses
+  # Overview Screen Interval.
+  - interval: 1s
+    then:
+      - lambda: |-
+          if (!id(auto_rotate).state || id(auto_rotate_paused)) return;
+          const uint32_t now = millis();
+          float interval_seconds = id(current_screen) == 5 ? id(overview_screen_interval_seconds).state : id(screen_interval_seconds).state;
+          if (isnan(interval_seconds) || interval_seconds <= 0.0f) interval_seconds = 10.0f;
+          const uint32_t interval_ms = (uint32_t) (interval_seconds * 1000.0f);
+          if (id(last_auto_advance_ms) == 0) {
+            id(last_auto_advance_ms) = now;
+            return;
+          }
+          if (now - id(last_auto_advance_ms) < interval_ms) return;
+          auto enabled = [](int screen) -> bool {
+            if (screen == 0) return id(show_clock).state;
+            if (screen == 1) return id(show_openai).state;
+            if (screen == 2) return id(show_anthropic).state;
+            if (screen == 3) return id(show_openrouter).state;
+            if (screen == 4) return id(show_openwebui).state;
+            if (screen == 5) return id(show_overview).state;
+            return false;
+          };
+          for (int i = 0; i < 6; i++) {
+            id(current_screen) = (id(current_screen) + 1) % 6;
+            if (enabled(id(current_screen))) break;
+          }
+          id(last_auto_advance_ms) = now;
+      - component.update: main_display
+
+# 466x466 round AMOLED display driven over Quad-SPI. The lambda below is the
+# entire drawing routine - re-run every update_interval.
+display:
+  - platform: mipi_spi
+    id: main_display
+    model: CO5300
+    bus_mode: quad
+    spi_id: display_qspi
+    cs_pin: GPIO12
+    reset_pin: GPIO39
+    rotation: 180
+    dimensions:
+      width: 466
+      height: 466
+    color_order: RGB
+    invert_colors: false
+    brightness: 255
+    update_interval: 250ms
+    lambda: |-
+      const auto black = Color(0, 0, 0);
+      // Combine manual + auto-orientation rotation, modulo 4 (0/90/180/270 deg).
+      const int effective_rotation_steps = (id(display_rotation_steps) + id(auto_orientation_steps)) % 4;
+      // Only call set_rotation() when the value actually changed.
+      if (id(applied_display_rotation_steps) != effective_rotation_steps) {
+        if (effective_rotation_steps == 1) {
+          it.set_rotation(esphome::display::DISPLAY_ROTATION_90_DEGREES);
+        } else if (effective_rotation_steps == 2) {
+          it.set_rotation(esphome::display::DISPLAY_ROTATION_180_DEGREES);
+        } else if (effective_rotation_steps == 3) {
+          it.set_rotation(esphome::display::DISPLAY_ROTATION_270_DEGREES);
+        } else {
+          it.set_rotation(esphome::display::DISPLAY_ROTATION_0_DEGREES);
+        }
+        id(applied_display_rotation_steps) = effective_rotation_steps;
+      }
+
+      // Display "off" -> just paint solid black.
+      if (!id(display_enabled).state) {
+        it.fill(black);
+        return;
+      }
+      // Palette used by the UI.
+      const auto white = Color(255, 255, 255);
+      const auto muted = Color(150, 158, 170);
+      const auto green = Color(89, 220, 156);
+      const auto blue = Color(96, 165, 250);
+      const auto amber = Color(245, 180, 84);
+      const auto red = Color(248, 113, 113);
+
+      // First few frames after boot are forced black to hide any garbage
+      // framebuffer contents before the real UI is rendered.
+      if (id(startup_black_frames) > 0) {
+        it.fill(black);
+        id(startup_black_frames) -= 1;
+        return;
+      }
+
+      // Identity coordinate mapping. Kept as a hook in case a coordinate
+      // transform is reintroduced later.
+      auto map_point = [](int x, int y) -> std::pair<int, int> {
+        return {x, y};
+      };
+
+      auto text_align = [](TextAlign align) -> TextAlign {
+        return align;
+      };
+
+      // Thin wrappers around the display drawing primitives so they go through
+      // map_point() and text_align(). _r = "rotated/remapped".
+      auto line_r = [&](int x1, int y1, int x2, int y2, Color color) {
+        auto p1 = map_point(x1, y1);
+        auto p2 = map_point(x2, y2);
+        it.line(p1.first, p1.second, p2.first, p2.second, color);
+      };
+
+      auto circle_r = [&](int x, int y, int radius, Color color) {
+        auto p = map_point(x, y);
+        it.circle(p.first, p.second, radius, color);
+      };
+
+      auto filled_circle_r = [&](int x, int y, int radius, Color color) {
+        auto p = map_point(x, y);
+        it.filled_circle(p.first, p.second, radius, color);
+      };
+
+      auto image_r = [&](int x, int y, esphome::image::Image *image) {
+        auto p = map_point(x, y);
+        it.image(p.first, p.second, image, ImageAlign::CENTER);
+      };
+
+      auto printf_r = [&](int x, int y, auto font, Color color, TextAlign align, const char *format, auto... args) {
+        auto p = map_point(x, y);
+        it.printf(p.first, p.second, font, color, text_align(align), format, args...);
+      };
+
+      auto strftime_r = [&](int x, int y, auto font, Color color, TextAlign align, const char *format, auto time) {
+        auto p = map_point(x, y);
+        it.strftime(p.first, p.second, font, color, text_align(align), format, time);
+      };
+
+      // Whether a screen index is currently visible per its toggle switch.
+      auto enabled = [](int screen) -> bool {
+        if (screen == 0) return id(show_clock).state;
+        if (screen == 1) return id(show_openai).state;
+        if (screen == 2) return id(show_anthropic).state;
+        if (screen == 3) return id(show_openrouter).state;
+        if (screen == 4) return id(show_openwebui).state;
+        if (screen == 5) return id(show_overview).state;
+        return false;
+      };
+      // Fallback if the user just disabled the screen we were showing.
+      if (!enabled(id(current_screen))) {
+        for (int i = 0; i < 6; i++) {
+          id(current_screen) = (id(current_screen) + 1) % 6;
+          if (enabled(id(current_screen))) break;
+        }
+      }
+
+      // String formatters for the three value styles shown on the UI.
+      auto money = [](float value) -> std::string {
+        if (isnan(value)) return "--";
+        char buffer[20];
+        snprintf(buffer, sizeof(buffer), "$%.2f", value);
+        return std::string(buffer);
+      };
+
+      auto tokens = [](float value) -> std::string {
+        if (isnan(value)) return "--";
+        char buffer[20];
+        if (value >= 1000000.0f) {
+          snprintf(buffer, sizeof(buffer), "%.2fM", value / 1000000.0f);
+        } else if (value >= 10000.0f) {
+          snprintf(buffer, sizeof(buffer), "%.1fK", value / 1000.0f);
+        } else {
+          snprintf(buffer, sizeof(buffer), "%.0f", value);
+        }
+        return std::string(buffer);
+      };
+
+      auto percent = [](float value) -> std::string {
+        if (isnan(value)) return "--";
+        char buffer[20];
+        snprintf(buffer, sizeof(buffer), "%.1f%%", value);
+        return std::string(buffer);
+      };
+
+      auto usage_from_goal = [](float used, float goal) -> float {
+        if (isnan(used) || isnan(goal) || goal <= 0.0f) return 0.0f;
+        return used * 100.0f / goal;
+      };
+
+      auto left_from_goal = [](float used, float goal) -> float {
+        if (isnan(goal) || goal <= 0.0f) return 0.0f;
+        if (isnan(used)) used = 0.0f;
+        float left = goal - used;
+        return left > 0.0f ? left : 0.0f;
+      };
+
+      auto ktokens_to_tokens = [](float ktokens) -> float {
+        if (isnan(ktokens) || ktokens <= 0.0f) return 0.0f;
+        return ktokens * 1000.0f;
+      };
+
+      auto auto_rotate_remaining_percent = [&]() -> float {
+        if (!id(auto_rotate).state) return 0.0f;
+        float interval_seconds = id(current_screen) == 5 ? id(overview_screen_interval_seconds).state : id(screen_interval_seconds).state;
+        if (isnan(interval_seconds) || interval_seconds <= 0.0f) return 0.0f;
+        const uint32_t interval_ms = (uint32_t) (interval_seconds * 1000.0f);
+        if (interval_ms == 0 || id(last_auto_advance_ms) == 0) return 100.0f;
+        uint32_t elapsed_ms = millis() - id(last_auto_advance_ms);
+        if (elapsed_ms >= interval_ms) return 0.0f;
+        return 100.0f - ((float) elapsed_ms * 100.0f / (float) interval_ms);
+      };
+
+      // Full 360-degree usage ring along the edge of the display.
+      // Drawn as two passes: a muted background dotted track, then an accent
+      // arc filled from the top (12 o'clock) up to `pct` percent of the way around.
+      auto draw_progress_ring = [&](float usage_percent, Color accent) {
+        const int cx = 233;
+        const int cy = 233;
+        const int radius = 216;
+        const int thickness = 10;
+        float pct = isnan(usage_percent) ? 0.0f : usage_percent;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+
+        // Background track.
+        for (int step = 0; step < 360; step += 2) {
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 4, Color(31, 36, 45));
+        }
+
+        // Accent fill: 100% -> 360 degrees, so 3.6 deg per percent.
+        int filled_steps = (int) (pct * 3.6f);
+        for (int step = 0; step <= filled_steps; step += 2) {
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, thickness / 2, accent);
+        }
+      };
+
+      // Inner countdown ring for auto-rotate. It starts full after each screen
+      // change and drains counter-clockwise until the next automatic switch.
+      auto draw_auto_rotate_timer_ring = [&]() {
+        if (!id(auto_rotate).state || id(auto_rotate_paused)) return;
+        const int cx = 233;
+        const int cy = 233;
+        const int radius = 206;
+        const auto timer_track = Color(13, 24, 39);
+        const auto timer_blue = Color(21, 38, 108);
+        float pct = auto_rotate_remaining_percent();
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+
+        for (int step = 0; step < 360; step += 3) {
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 2, timer_track);
+        }
+
+        int filled_steps = (int) (pct * 3.6f);
+        for (int step = 0; step <= filled_steps; step += 3) {
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 3, timer_blue);
+        }
+      };
+
+      // 90-degree usage arc spanning [start_deg, end_deg]. Used by the
+      // overview screen to render four account quadrants plus a center clock.
+      auto draw_quarter_usage_arc = [&](int start_deg, int end_deg, float usage_percent, Color accent) {
+        float pct = isnan(usage_percent) ? 0.0f : usage_percent;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+        const int cx = 233;
+        const int cy = 233;
+        const int radius = 216;
+        const int filled_end = start_deg + (int) ((end_deg - start_deg) * (pct / 100.0f));
+
+        for (int step = start_deg; step <= end_deg; step += 2) {
+          float angle = step * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 4, Color(31, 36, 45));
+        }
+        for (int step = start_deg; step <= filled_end; step += 2) {
+          float angle = step * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 5, accent);
+        }
+      };
+
+      // Clock-face seconds indicator: 60 background "ticks" + an accent arc
+      // proportional to the current second (0..59 maps to 0..354 degrees).
+      auto draw_seconds_ring = [&](int second, Color accent) {
+        const int cx = 233;
+        const int cy = 233;
+        const int radius = 216;
+        const int thickness = 10;
+        int safe_second = second;
+        if (safe_second < 0) safe_second = 0;
+        if (safe_second > 59) safe_second = 59;
+
+        for (int step = 0; step < 360; step += 6) {
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 4, Color(31, 36, 45));
+        }
+
+        for (int step = 0; step <= safe_second * 6; step += 2) {
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, thickness / 2, accent);
+        }
+      };
+
+      // Pagination dots near the bottom showing which screen is active.
+      // Hidden when only one screen is enabled (nothing to navigate).
+      auto draw_footer = [&](int screen, Color accent) {
+        const int y = screen == 5 ? 430 : 406;
+        int visible = 0;
+        for (int i = 0; i < 6; i++) visible += enabled(i) ? 1 : 0;
+        if (visible <= 1) return;
+        int x = 233 - ((visible - 1) * 12);
+        for (int i = 0; i < 6; i++) {
+          if (!enabled(i)) continue;
+          int radius = screen == 5 ? (i == screen ? 7 : 4) : (i == screen ? 5 : 3);
+          filled_circle_r(x, y, radius, i == screen ? accent : muted);
+          x += 24;
+        }
+      };
+
+      auto draw_overview_clock = [&](auto now) {
+        const int cx = 233;
+        const int cy = 233;
+        const int radius = 42;
+        filled_circle_r(cx, cy, radius, Color(12, 14, 18));
+        circle_r(cx, cy, radius, Color(57, 65, 80));
+        circle_r(cx, cy, radius - 5, Color(31, 36, 45));
+
+        for (int tick = 0; tick < 12; tick++) {
+          float angle = (tick * 30.0f - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) ((radius - 8) * cos(angle));
+          int y = cy + (int) ((radius - 8) * sin(angle));
+          filled_circle_r(x, y, tick % 3 == 0 ? 2 : 1, muted);
+        }
+
+        int hour = 0;
+        int minute = 0;
+        int second = 0;
+        if (now.is_valid()) {
+          hour = now.hour % 12;
+          minute = now.minute;
+          second = now.second;
+        }
+        float hour_angle = ((hour + minute / 60.0f) * 30.0f - 90.0f) * M_PI / 180.0f;
+        float minute_angle = ((minute + second / 60.0f) * 6.0f - 90.0f) * M_PI / 180.0f;
+        float second_angle = (second * 6.0f - 90.0f) * M_PI / 180.0f;
+
+        line_r(cx, cy, cx + (int) (20 * cos(hour_angle)), cy + (int) (20 * sin(hour_angle)), white);
+        line_r(cx, cy, cx + (int) (30 * cos(minute_angle)), cy + (int) (30 * sin(minute_angle)), Color(190, 198, 214));
+        line_r(cx, cy, cx + (int) (34 * cos(second_angle)), cy + (int) (34 * sin(second_angle)), Color(248, 113, 113));
+        filled_circle_r(cx, cy, 4, white);
+      };
+
+      // Compact tile (logo + label + value + percent) used in the overview screen.
+      auto draw_overview_tile = [&](int cx, int cy, const char *name, esphome::image::Image *logo, const char *value, float usage_percent, Color accent) {
+        image_r(cx, cy - 42, logo);
+        printf_r(cx, cy + 8, id(font_tiny), muted, TextAlign::CENTER, "%s", name);
+        printf_r(cx, cy + 43, id(font_small_value), accent, TextAlign::CENTER, "%s", value);
+        printf_r(cx, cy + 72, id(font_tiny), white, TextAlign::CENTER, "%s", percent(usage_percent).c_str());
+      };
+
+      // Full-screen layout for token-based accounts (Codex, Claude Code):
+      // dark disc, progress ring along the edge, brand logo on top, large
+      // tokens-left value and a usage percentage at the bottom.
+      auto draw_token_account = [&](const char *name, esphome::image::Image *logo, float tokens_left, float usage_percent, const char *usage_label, Color accent) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(12, 14, 18));
+        draw_progress_ring(usage_percent, accent);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        image_r(233, 78, logo);
+        printf_r(233, 137, id(font_title), white, TextAlign::CENTER, "%s", name);
+        printf_r(233, 202, id(font_label), muted, TextAlign::CENTER, "Tokens left");
+        printf_r(233, 246, id(font_value), accent, TextAlign::CENTER, "%s", tokens(tokens_left).c_str());
+        printf_r(233, 306, id(font_label), muted, TextAlign::CENTER, "%s", usage_label);
+        printf_r(233, 346, id(font_title), white, TextAlign::CENTER, "%s", percent(usage_percent).c_str());
+      };
+
+      // Same as draw_token_account but for money-denominated accounts (OpenRouter).
+      auto draw_money_account = [&](const char *name, esphome::image::Image *logo, float balance, float usage_percent, Color accent) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(12, 14, 18));
+        draw_progress_ring(usage_percent, accent);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        image_r(233, 78, logo);
+        printf_r(233, 137, id(font_title), white, TextAlign::CENTER, "%s", name);
+        printf_r(233, 202, id(font_label), muted, TextAlign::CENTER, "Balance left");
+        printf_r(233, 246, id(font_value), accent, TextAlign::CENTER, "%s", money(balance).c_str());
+        printf_r(233, 306, id(font_label), muted, TextAlign::CENTER, "Credits used");
+        printf_r(233, 346, id(font_title), white, TextAlign::CENTER, "%s", percent(usage_percent).c_str());
+      };
+
+      // Self-hosted Open WebUI screen. Progress ring shows today's tokens as a
+      // fraction of the adjustable daily goal. Bottom value is chats today.
+      auto draw_openwebui_account = [&](float tokens_today, float chats_today, float daily_goal) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(12, 14, 18));
+        float pct = usage_from_goal(tokens_today, daily_goal);
+        draw_progress_ring(pct, red);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        image_r(233, 78, id(img_openwebui_compact));
+        printf_r(233, 137, id(font_title), white, TextAlign::CENTER, "Open WebUI");
+        printf_r(233, 202, id(font_label), muted, TextAlign::CENTER, "Tokens used");
+        printf_r(233, 246, id(font_value), red, TextAlign::CENTER, "%s", tokens(tokens_today).c_str());
+        printf_r(233, 306, id(font_label), muted, TextAlign::CENTER, "Chats today");
+        printf_r(233, 346, id(font_title), white, TextAlign::CENTER, "%.0f", isnan(chats_today) ? 0.0f : chats_today);
+      };
+
+      // ===== Screen dispatch =====
+      // Screen 0: Clock with seconds ring and weekday/date.
+      if (id(current_screen) == 0) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(10, 13, 16));
+        auto now = id(home_assistant_time).now();
+        draw_seconds_ring(now.is_valid() ? now.second : 0, green);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        if (now.is_valid()) {
+          strftime_r(233, 214, id(font_clock), white, TextAlign::CENTER, "%H:%M", now);
+          strftime_r(233, 280, id(font_label), muted, TextAlign::CENTER, "%A %d %b", now);
+        } else {
+          printf_r(233, 214, id(font_clock), white, TextAlign::CENTER, "--:--");
+          printf_r(233, 280, id(font_label), muted, TextAlign::CENTER, "Waiting for HA time");
+        }
+        draw_footer(0, green);
+        return;
+      }
+
+      // Screen 1: Codex (OpenAI) tokens, green accent.
+      if (id(current_screen) == 1) {
+        float codex_used = id(openai_tokens_today).state;
+        float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
+        draw_token_account("Codex", id(img_openai_compact), left_from_goal(codex_used, codex_goal), usage_from_goal(codex_used, codex_goal), "Used today", green);
+        draw_footer(1, green);
+        return;
+      }
+      // Screen 2: Claude Code (Anthropic) tokens, amber accent.
+      if (id(current_screen) == 2) {
+        float claude_used = id(anthropic_tokens_today).state;
+        float claude_goal = ktokens_to_tokens(id(claude_daily_token_goal).state);
+        draw_token_account("Claude Code", id(img_anthropic_compact), left_from_goal(claude_used, claude_goal), usage_from_goal(claude_used, claude_goal), "Used today", amber);
+        draw_footer(2, amber);
+        return;
+      }
+      // Screen 3: OpenRouter remaining credit, blue accent.
+      if (id(current_screen) == 3) {
+        draw_money_account("OpenRouter", id(img_openrouter_compact), id(openrouter_balance_remaining).state, id(openrouter_usage_percent).state, blue);
+        draw_footer(3, blue);
+        return;
+      }
+      // Screen 4: Open WebUI self-hosted stats, red accent.
+      if (id(current_screen) == 4) {
+        draw_openwebui_account(
+          id(openwebui_tokens_today).state,
+          id(openwebui_chats_today).state,
+          ktokens_to_tokens(id(openwebui_daily_token_goal).state));
+        draw_footer(4, red);
+        return;
+      }
+      // Screen 5: Overview - four account arcs + four small tiles + center clock.
+      it.fill(black);
+      filled_circle_r(233, 233, 208, Color(10, 13, 16));
+      // Quadrant arcs: top-left=Codex, top-right=Claude, bottom-left=OpenRouter,
+      // bottom-right=Open WebUI. (Angle 0 is at 3 o'clock, increasing CW.)
+      float codex_used = id(openai_tokens_today).state;
+      float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
+      float codex_pct = usage_from_goal(codex_used, codex_goal);
+      float claude_used = id(anthropic_tokens_today).state;
+      float claude_goal = ktokens_to_tokens(id(claude_daily_token_goal).state);
+      float claude_pct = usage_from_goal(claude_used, claude_goal);
+      float owui_used = id(openwebui_tokens_today).state;
+      float owui_goal = ktokens_to_tokens(id(openwebui_daily_token_goal).state);
+      float owui_pct = usage_from_goal(owui_used, owui_goal);
+      draw_quarter_usage_arc(180, 270, codex_pct, green);
+      draw_quarter_usage_arc(270, 360, claude_pct, amber);
+      draw_quarter_usage_arc(90, 180, id(openrouter_usage_percent).state, blue);
+      draw_quarter_usage_arc(0, 90, owui_pct, red);
+      draw_auto_rotate_timer_ring();
+      // Cross-hair separating the four quadrants.
+      line_r(233, 32, 233, 434, Color(42, 47, 58));
+      line_r(32, 233, 434, 233, Color(42, 47, 58));
+      circle_r(233, 233, 206, Color(42, 47, 58));
+      draw_overview_clock(id(home_assistant_time).now());
+      draw_overview_tile(148, 135, "Codex", id(img_openai_small), tokens(left_from_goal(codex_used, codex_goal)).c_str(), codex_pct, green);
+      draw_overview_tile(318, 135, "Claude", id(img_anthropic_small), tokens(left_from_goal(claude_used, claude_goal)).c_str(), claude_pct, amber);
+      draw_overview_tile(148, 313, "Router", id(img_openrouter_small), money(id(openrouter_balance_remaining).state).c_str(), id(openrouter_usage_percent).state, blue);
+      draw_overview_tile(318, 313, "WebUI", id(img_openwebui_small), tokens(owui_used).c_str(), owui_pct, red);
+      draw_footer(5, white);
+      return;
+
+# CST9217 capacitive touchscreen. The on_touch / on_update / on_release
+# handlers implement a swipe gesture detector that pages between screens.
+touchscreen:
+  - platform: cst9217
+    id: touch_panel
+    display: main_display
+    interrupt_pin: GPIO11
+    reset_pin: GPIO40
+    transform:
+      mirror_x: true
+      mirror_y: true
+      swap_xy: false
+    on_touch:
+      - lambda: |-
+          const uint32_t now = millis();
+          if (id(touch_is_active) && now - id(touch_started_ms) > 1000) {
+            id(touch_is_active) = false;
+          }
+          // Lock the start point for the whole gesture. Some panels report
+          // repeated on_touch events while dragging.
+          if (!id(touch_is_active)) {
+            id(swipe_start_x) = touch.x;
+            id(swipe_start_y) = touch.y;
+            id(touch_swipe_handled) = false;
+            id(touch_is_active) = true;
+            id(touch_started_ms) = now;
+          }
+          id(swipe_last_x) = touch.x;
+          id(swipe_last_y) = touch.y;
+    on_update:
+      - lambda: |-
+          // Detect swipes while the finger is moving; release events can arrive
+          // without a useful final coordinate on this panel.
+          const uint32_t now = millis();
+          for (auto touch : touches) {
+            if (touch.state > 2) continue;
+
+            if (id(touch_is_active) && now - id(touch_started_ms) > 1000) {
+              id(touch_is_active) = false;
+            }
+
+            if (!id(touch_is_active)) {
+              id(swipe_start_x) = touch.x;
+              id(swipe_start_y) = touch.y;
+              id(touch_swipe_handled) = false;
+              id(touch_is_active) = true;
+              id(touch_started_ms) = now;
+            }
+
+            id(swipe_last_x) = touch.x;
+            id(swipe_last_y) = touch.y;
+
+            if (id(touch_swipe_handled)) continue;
+
+            const int raw_dx = touch.x - id(swipe_start_x);
+            const int raw_dy = touch.y - id(swipe_start_y);
+            int dx = raw_dx;
+            int dy = raw_dy;
+            const int rotation_steps = (id(display_rotation_steps) + id(auto_orientation_steps)) % 4;
+            if (rotation_steps == 1) {
+              dx = raw_dy;
+              dy = -raw_dx;
+            } else if (rotation_steps == 2) {
+              dx = -raw_dx;
+              dy = -raw_dy;
+            } else if (rotation_steps == 3) {
+              dx = -raw_dy;
+              dy = raw_dx;
+            }
+            const int abs_dx = abs(dx);
+            const int abs_dy = abs(dy);
+            const int swipe_threshold = 34;
+
+            if (abs_dx < swipe_threshold || abs_dx < abs_dy * 1.20f) {
+              continue;
+            }
+
+            auto enabled = [](int screen) -> bool {
+              if (screen == 0) return id(show_clock).state;
+              if (screen == 1) return id(show_openai).state;
+              if (screen == 2) return id(show_anthropic).state;
+              if (screen == 3) return id(show_openrouter).state;
+              if (screen == 4) return id(show_openwebui).state;
+              if (screen == 5) return id(show_overview).state;
+              return false;
+            };
+
+            // Left swipe moves forward, right swipe moves backward.
+            const bool forward = dx < 0;
+            for (int i = 0; i < 6; i++) {
+              id(current_screen) = forward ? (id(current_screen) + 1) % 6 : (id(current_screen) + 5) % 6;
+              if (enabled(id(current_screen))) break;
+            }
+
+            id(touch_swipe_handled) = true;
+            if (!id(auto_rotate_paused)) id(last_auto_advance_ms) = millis();
+          }
+    on_release:
+      - lambda: |-
+          if (id(touch_swipe_handled)) {
+            id(touch_swipe_handled) = false;
+            id(touch_is_active) = false;
+            return;
+          }
+
+          // Horizontal swipes page left/right. Short taps are ignored so they
+          // never steal an intended swipe. This is only a fallback if the panel
+          // did not deliver enough movement updates while pressed.
+          const int raw_dx = id(swipe_last_x) - id(swipe_start_x);
+          const int raw_dy = id(swipe_last_y) - id(swipe_start_y);
+          int dx = raw_dx;
+          int dy = raw_dy;
+          const int rotation_steps = (id(display_rotation_steps) + id(auto_orientation_steps)) % 4;
+          if (rotation_steps == 1) {
+            dx = raw_dy;
+            dy = -raw_dx;
+          } else if (rotation_steps == 2) {
+            dx = -raw_dx;
+            dy = -raw_dy;
+          } else if (rotation_steps == 3) {
+            dx = -raw_dy;
+            dy = raw_dx;
+          }
+          const int abs_dx = abs(dx);
+          const int abs_dy = abs(dy);
+          const int swipe_threshold = 34;
+
+          auto enabled = [](int screen) -> bool {
+            if (screen == 0) return id(show_clock).state;
+            if (screen == 1) return id(show_openai).state;
+            if (screen == 2) return id(show_anthropic).state;
+            if (screen == 3) return id(show_openrouter).state;
+            if (screen == 4) return id(show_openwebui).state;
+            if (screen == 5) return id(show_overview).state;
+            return false;
+          };
+
+          id(touch_is_active) = false;
+
+          if (abs_dx < swipe_threshold || abs_dx < abs_dy * 1.20f) {
+            return;
+          }
+
+          // Left swipe moves forward, right swipe moves backward.
+          const bool forward = dx < 0;
+
+          // Walk forward or backward through the screens, skipping disabled ones.
+          for (int i = 0; i < 6; i++) {
+            id(current_screen) = forward ? (id(current_screen) + 1) % 6 : (id(current_screen) + 5) % 6;
+            if (enabled(id(current_screen))) break;
+          }
+          // Reset the auto-rotate timer so the user gets a full dwell on the chosen screen.
+          if (!id(auto_rotate_paused)) id(last_auto_advance_ms) = millis();

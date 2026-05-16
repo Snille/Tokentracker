@@ -1,0 +1,28 @@
+# Wifi Settings
+wifi:
+  ssid: !secret iot_wifi_ssid
+  password: !secret iot_wifi_password
+  domain: !secret iot_wifi_domain
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${name}
+    password: !secret wifi_ap_password
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: !secret api_key
+
+# Enable OTA upgrade
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# Scan and send wifi networks list.
+improv_serial:
+
+# captive_portal:
+
+time:
+  - platform: homeassistant
+    id: esptime
