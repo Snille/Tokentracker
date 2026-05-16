@@ -1,5 +1,42 @@
 # History
 
+## 0.2.0 - 2026-05-17
+
+### ESPHome Display
+
+- Bumped ESPHome display to `1.8.1`.
+- Reworked the Codex, Claude Code, OpenRouter and Open WebUI screens into
+  richer provider dashboards with input/output/cache/cost details.
+- Tuned the provider, Today and I/O Mix layouts for the round 466x466 display:
+  smaller logos and headline values, tighter lower metrics and thinner I/O bars.
+- Added two overview screens:
+  - I/O Mix across Codex, Claude Code, Open WebUI and OpenRouter activity.
+  - Today summary with local tokens, self-hosted tokens, router cost, chats and
+    key count.
+- Expanded the carousel from 6 to 8 screens while keeping one Show Overview
+  switch for all overview pages.
+
+### Home Assistant
+
+- Bumped Home Assistant package to `1.2.1`.
+- Added OpenRouter support for five tracked API-key slots,
+  `openrouter_api_bearer1` through `openrouter_api_bearer5`, with combined
+  legacy display sensors for key limit, remaining credit and daily/weekly/monthly
+  cost.
+- Added OpenRouter `/activity` sensors for prompt, completion, reasoning and
+  total token history where OpenRouter exposes it.
+- Added Open WebUI model-count and input/output percentage sensors for today's
+  local analytics.
+
+### VS Code Extension
+
+- Bumped VS Code extension to `1.2.1`.
+- Added detailed Codex MQTT sensors for input, cached input, output and
+  reasoning output tokens from local Codex rollout session logs.
+- Added detailed Claude Code MQTT sensors for input, cache creation, cache read
+  and output tokens from local Claude JSONL logs.
+- Kept the existing aggregate `tokens_today` sensors for compatibility.
+
 ## 0.1.0 - 2026-05-16
 
 Initial public-ready snapshot of Token Tracker.
@@ -40,7 +77,7 @@ Initial public-ready snapshot of Token Tracker.
 - Added auto-orientation using QMI8658 IMU.
 - Hid noisy IMU sensors/logging from normal Home Assistant and ESP logs.
 - Added separate overview/quadrant dwell time.
-- Current ESPHome project version: `1.7.5`.
+- ESPHome project version: `1.7.5`.
 
 ### Home Assistant
 
@@ -63,7 +100,7 @@ Initial public-ready snapshot of Token Tracker.
   which is more useful for a one-person instance.
 - Removed dependency on old command_line/template token packages.
 - Documented cleanup of stale Home Assistant entities.
-- Current Home Assistant package version: `1.1.0`.
+- Home Assistant package version: `1.1.0`.
 
 ### VS Code Extension
 
@@ -78,7 +115,7 @@ Initial public-ready snapshot of Token Tracker.
 - Added MQTT discovery tombstones for old legacy sensors so Home Assistant can
   clean them up.
 - Added `.vscodeignore` to keep local source/build files out of packaged VSIX.
-- Current VS Code extension version: `1.1.0`.
+- VS Code extension version: `1.1.0`.
 
 ### Repository Cleanup
 

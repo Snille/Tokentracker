@@ -8,14 +8,38 @@ substitutions:
 
   # Home Assistant entity IDs that provide the account values (mirrored locally as sensors below).
   openai_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_today
+  openai_input_tokens_entity: sensor.tokentracker_vs_code_codex_input_tokens_today
+  openai_cached_input_tokens_entity: sensor.tokentracker_vs_code_codex_cached_input_tokens_today
+  openai_output_tokens_entity: sensor.tokentracker_vs_code_codex_output_tokens_today
+  openai_reasoning_output_tokens_entity: sensor.tokentracker_vs_code_codex_reasoning_output_tokens_today
   anthropic_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_today
+  anthropic_input_tokens_entity: sensor.tokentracker_vs_code_claude_code_input_tokens_today
+  anthropic_cache_creation_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_today
+  anthropic_cache_read_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_read_tokens_today
+  anthropic_output_tokens_entity: sensor.tokentracker_vs_code_claude_code_output_tokens_today
   openrouter_tokens_entity: sensor.openrouter_tokens_today
   openrouter_balance_entity: sensor.openrouter_balance_remaining
   openrouter_usage_percent_entity: sensor.openrouter_usage_percent
+  openrouter_key_limit_remaining_entity: sensor.openrouter_key_limit_remaining
+  openrouter_key_usage_percent_entity: sensor.openrouter_key_usage_percent
+  openrouter_cost_today_entity: sensor.openrouter_cost_today
+  openrouter_cost_week_entity: sensor.openrouter_cost_week
+  openrouter_cost_month_entity: sensor.openrouter_cost_month
+  openrouter_key_count_entity: sensor.openrouter_key_count
+  openrouter_activity_prompt_tokens_entity: sensor.openrouter_activity_prompt_tokens
+  openrouter_activity_completion_tokens_entity: sensor.openrouter_activity_completion_tokens
+  openrouter_activity_reasoning_tokens_entity: sensor.openrouter_activity_reasoning_tokens
+  openrouter_activity_tokens_entity: sensor.openrouter_activity_tokens
+  openrouter_activity_requests_entity: sensor.openrouter_activity_requests
   openwebui_tokens_today_entity: sensor.openwebui_tokens_today
+  openwebui_input_tokens_today_entity: sensor.openwebui_input_tokens_today
+  openwebui_output_tokens_today_entity: sensor.openwebui_output_tokens_today
   openwebui_chats_today_entity: sensor.openwebui_chats_today
   openwebui_active_users_entity: sensor.openwebui_active_users
   openwebui_total_users_entity: sensor.openwebui_total_users
+  openwebui_models_today_entity: sensor.openwebui_models_today
+  openwebui_input_token_percent_today_entity: sensor.openwebui_input_token_percent_today
+  openwebui_output_token_percent_today_entity: sensor.openwebui_output_token_percent_today
   openwebui_top_model_entity: sensor.openwebui_top_model
 
   # Maximum values for the HA config sliders below, expressed in ktokens
@@ -37,7 +61,7 @@ esphome:
     board_build.f_cpu: 240000000L
   project:
     name: snille.token-tracker
-    version: "1.7.5"
+    version: "1.8.1"
   on_boot:
     # Priority -100 = runs late, after hardware components have been set up.
     priority: -100
@@ -45,7 +69,7 @@ esphome:
       - logger.log:
           level: INFO
           tag: tokentracker
-          format: "TokenTracker ESPHome build 1.7.5: separate overview screen interval"
+          format: "TokenTracker ESPHome build 1.8.1: rich provider and overview screens"
       - lambda: |-
           float brightness_percent = id(display_brightness_percent).state;
           if (isnan(brightness_percent)) brightness_percent = 70.0f;
@@ -119,7 +143,7 @@ external_components:
 # Globals = persistent runtime variables shared between lambdas.
 # Those with restore_value: true are saved to flash across reboots.
 globals:
-  # Index 0..5 of the screen currently displayed (clock / Codex / Claude / OpenRouter / Open WebUI / overview).
+  # Index 0..7 of the screen currently displayed (clock / four providers / three overviews).
   - id: current_screen
     type: int
     restore_value: true
@@ -318,8 +342,32 @@ sensor:
     id: openai_tokens_today
     entity_id: ${openai_tokens_entity}
   - platform: homeassistant
+    id: openai_input_tokens_today
+    entity_id: ${openai_input_tokens_entity}
+  - platform: homeassistant
+    id: openai_cached_input_tokens_today
+    entity_id: ${openai_cached_input_tokens_entity}
+  - platform: homeassistant
+    id: openai_output_tokens_today
+    entity_id: ${openai_output_tokens_entity}
+  - platform: homeassistant
+    id: openai_reasoning_output_tokens_today
+    entity_id: ${openai_reasoning_output_tokens_entity}
+  - platform: homeassistant
     id: anthropic_tokens_today
     entity_id: ${anthropic_tokens_entity}
+  - platform: homeassistant
+    id: anthropic_input_tokens_today
+    entity_id: ${anthropic_input_tokens_entity}
+  - platform: homeassistant
+    id: anthropic_cache_creation_tokens_today
+    entity_id: ${anthropic_cache_creation_tokens_entity}
+  - platform: homeassistant
+    id: anthropic_cache_read_tokens_today
+    entity_id: ${anthropic_cache_read_tokens_entity}
+  - platform: homeassistant
+    id: anthropic_output_tokens_today
+    entity_id: ${anthropic_output_tokens_entity}
   - platform: homeassistant
     id: openrouter_tokens_today
     entity_id: ${openrouter_tokens_entity}
@@ -330,8 +378,47 @@ sensor:
     id: openrouter_usage_percent
     entity_id: ${openrouter_usage_percent_entity}
   - platform: homeassistant
+    id: openrouter_key_limit_remaining
+    entity_id: ${openrouter_key_limit_remaining_entity}
+  - platform: homeassistant
+    id: openrouter_key_usage_percent
+    entity_id: ${openrouter_key_usage_percent_entity}
+  - platform: homeassistant
+    id: openrouter_cost_today
+    entity_id: ${openrouter_cost_today_entity}
+  - platform: homeassistant
+    id: openrouter_cost_week
+    entity_id: ${openrouter_cost_week_entity}
+  - platform: homeassistant
+    id: openrouter_cost_month
+    entity_id: ${openrouter_cost_month_entity}
+  - platform: homeassistant
+    id: openrouter_key_count
+    entity_id: ${openrouter_key_count_entity}
+  - platform: homeassistant
+    id: openrouter_activity_prompt_tokens
+    entity_id: ${openrouter_activity_prompt_tokens_entity}
+  - platform: homeassistant
+    id: openrouter_activity_completion_tokens
+    entity_id: ${openrouter_activity_completion_tokens_entity}
+  - platform: homeassistant
+    id: openrouter_activity_reasoning_tokens
+    entity_id: ${openrouter_activity_reasoning_tokens_entity}
+  - platform: homeassistant
+    id: openrouter_activity_tokens
+    entity_id: ${openrouter_activity_tokens_entity}
+  - platform: homeassistant
+    id: openrouter_activity_requests
+    entity_id: ${openrouter_activity_requests_entity}
+  - platform: homeassistant
     id: openwebui_tokens_today
     entity_id: ${openwebui_tokens_today_entity}
+  - platform: homeassistant
+    id: openwebui_input_tokens_today
+    entity_id: ${openwebui_input_tokens_today_entity}
+  - platform: homeassistant
+    id: openwebui_output_tokens_today
+    entity_id: ${openwebui_output_tokens_today_entity}
   - platform: homeassistant
     id: openwebui_chats_today
     entity_id: ${openwebui_chats_today_entity}
@@ -341,6 +428,15 @@ sensor:
   - platform: homeassistant
     id: openwebui_total_users
     entity_id: ${openwebui_total_users_entity}
+  - platform: homeassistant
+    id: openwebui_models_today
+    entity_id: ${openwebui_models_today_entity}
+  - platform: homeassistant
+    id: openwebui_input_token_percent_today
+    entity_id: ${openwebui_input_token_percent_today_entity}
+  - platform: homeassistant
+    id: openwebui_output_token_percent_today
+    entity_id: ${openwebui_output_token_percent_today_entity}
   # Template sensors for the QMI8658 IMU. update_interval: never means values
   # only change when publish_state() is called from the 1s interval lambda.
   # Kept internal so ESPHome does not dump seven noisy sensor status lines.
@@ -546,11 +642,13 @@ button:
             if (screen == 3) return id(show_openrouter).state;
             if (screen == 4) return id(show_openwebui).state;
             if (screen == 5) return id(show_overview).state;
+            if (screen == 6) return id(show_overview).state;
+            if (screen == 7) return id(show_overview).state;
             return false;
           };
           // Advance forward, stopping on the first enabled screen.
-          for (int i = 0; i < 6; i++) {
-            id(current_screen) = (id(current_screen) + 1) % 6;
+          for (int i = 0; i < 8; i++) {
+            id(current_screen) = (id(current_screen) + 1) % 8;
             if (enabled(id(current_screen))) break;
           }
           id(last_auto_advance_ms) = millis();
@@ -569,11 +667,13 @@ button:
             if (screen == 3) return id(show_openrouter).state;
             if (screen == 4) return id(show_openwebui).state;
             if (screen == 5) return id(show_overview).state;
+            if (screen == 6) return id(show_overview).state;
+            if (screen == 7) return id(show_overview).state;
             return false;
           };
-          // +5 mod 6 == -1 mod 6: walk one step backwards through the screens.
-          for (int i = 0; i < 6; i++) {
-            id(current_screen) = (id(current_screen) + 5) % 6;
+          // +7 mod 8 == -1 mod 8: walk one step backwards through the screens.
+          for (int i = 0; i < 8; i++) {
+            id(current_screen) = (id(current_screen) + 7) % 8;
             if (enabled(id(current_screen))) break;
           }
           id(last_auto_advance_ms) = millis();
@@ -842,7 +942,7 @@ interval:
       - lambda: |-
           if (!id(auto_rotate).state || id(auto_rotate_paused)) return;
           const uint32_t now = millis();
-          float interval_seconds = id(current_screen) == 5 ? id(overview_screen_interval_seconds).state : id(screen_interval_seconds).state;
+          float interval_seconds = id(current_screen) >= 5 ? id(overview_screen_interval_seconds).state : id(screen_interval_seconds).state;
           if (isnan(interval_seconds) || interval_seconds <= 0.0f) interval_seconds = 10.0f;
           const uint32_t interval_ms = (uint32_t) (interval_seconds * 1000.0f);
           if (id(last_auto_advance_ms) == 0) {
@@ -857,10 +957,12 @@ interval:
             if (screen == 3) return id(show_openrouter).state;
             if (screen == 4) return id(show_openwebui).state;
             if (screen == 5) return id(show_overview).state;
+            if (screen == 6) return id(show_overview).state;
+            if (screen == 7) return id(show_overview).state;
             return false;
           };
-          for (int i = 0; i < 6; i++) {
-            id(current_screen) = (id(current_screen) + 1) % 6;
+          for (int i = 0; i < 8; i++) {
+            id(current_screen) = (id(current_screen) + 1) % 8;
             if (enabled(id(current_screen))) break;
           }
           id(last_auto_advance_ms) = now;
@@ -951,6 +1053,16 @@ display:
         it.filled_circle(p.first, p.second, radius, color);
       };
 
+      auto rect_r = [&](int x, int y, int width, int height, Color color) {
+        auto p = map_point(x, y);
+        it.rectangle(p.first, p.second, width, height, color);
+      };
+
+      auto filled_rect_r = [&](int x, int y, int width, int height, Color color) {
+        auto p = map_point(x, y);
+        it.filled_rectangle(p.first, p.second, width, height, color);
+      };
+
       auto image_r = [&](int x, int y, esphome::image::Image *image) {
         auto p = map_point(x, y);
         it.image(p.first, p.second, image, ImageAlign::CENTER);
@@ -974,12 +1086,14 @@ display:
         if (screen == 3) return id(show_openrouter).state;
         if (screen == 4) return id(show_openwebui).state;
         if (screen == 5) return id(show_overview).state;
+        if (screen == 6) return id(show_overview).state;
+        if (screen == 7) return id(show_overview).state;
         return false;
       };
       // Fallback if the user just disabled the screen we were showing.
       if (!enabled(id(current_screen))) {
-        for (int i = 0; i < 6; i++) {
-          id(current_screen) = (id(current_screen) + 1) % 6;
+        for (int i = 0; i < 8; i++) {
+          id(current_screen) = (id(current_screen) + 1) % 8;
           if (enabled(id(current_screen))) break;
         }
       }
@@ -1031,7 +1145,7 @@ display:
 
       auto auto_rotate_remaining_percent = [&]() -> float {
         if (!id(auto_rotate).state) return 0.0f;
-        float interval_seconds = id(current_screen) == 5 ? id(overview_screen_interval_seconds).state : id(screen_interval_seconds).state;
+        float interval_seconds = id(current_screen) >= 5 ? id(overview_screen_interval_seconds).state : id(screen_interval_seconds).state;
         if (isnan(interval_seconds) || interval_seconds <= 0.0f) return 0.0f;
         const uint32_t interval_ms = (uint32_t) (interval_seconds * 1000.0f);
         if (interval_ms == 0 || id(last_auto_advance_ms) == 0) return 100.0f;
@@ -1153,14 +1267,14 @@ display:
       // Pagination dots near the bottom showing which screen is active.
       // Hidden when only one screen is enabled (nothing to navigate).
       auto draw_footer = [&](int screen, Color accent) {
-        const int y = screen == 5 ? 430 : 406;
+        const int y = screen >= 5 ? 430 : 406;
         int visible = 0;
-        for (int i = 0; i < 6; i++) visible += enabled(i) ? 1 : 0;
+        for (int i = 0; i < 8; i++) visible += enabled(i) ? 1 : 0;
         if (visible <= 1) return;
         int x = 233 - ((visible - 1) * 12);
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 8; i++) {
           if (!enabled(i)) continue;
-          int radius = screen == 5 ? (i == screen ? 7 : 4) : (i == screen ? 5 : 3);
+          int radius = screen >= 5 ? (i == screen ? 7 : 4) : (i == screen ? 5 : 3);
           filled_circle_r(x, y, radius, i == screen ? accent : muted);
           x += 24;
         }
@@ -1205,6 +1319,90 @@ display:
         printf_r(cx, cy + 8, id(font_tiny), muted, TextAlign::CENTER, "%s", name);
         printf_r(cx, cy + 43, id(font_small_value), accent, TextAlign::CENTER, "%s", value);
         printf_r(cx, cy + 72, id(font_tiny), white, TextAlign::CENTER, "%s", percent(usage_percent).c_str());
+      };
+
+      auto safe_value = [](float value) -> float {
+        return isnan(value) ? 0.0f : value;
+      };
+
+      auto draw_split_bar = [&](int x, int y, int width, int height, float left_value, float right_value, Color left_color, Color right_color) {
+        float left = safe_value(left_value);
+        float right = safe_value(right_value);
+        float total = left + right;
+        filled_rect_r(x, y, width, height, Color(31, 36, 45));
+        if (total <= 0.0f) {
+          rect_r(x, y, width, height, Color(57, 65, 80));
+          return;
+        }
+        int left_width = (int) ((left / total) * width);
+        if (left_width < 0) left_width = 0;
+        if (left_width > width) left_width = width;
+        if (left_width > 0) filled_rect_r(x, y, left_width, height, left_color);
+        if (left_width < width) filled_rect_r(x + left_width, y, width - left_width, height, right_color);
+        rect_r(x, y, width, height, Color(57, 65, 80));
+      };
+
+      auto draw_stat_pair = [&](int y, const char *left_label, const char *left_value, Color left_color, const char *right_label, const char *right_value, Color right_color) {
+        printf_r(154, y, id(font_tiny), muted, TextAlign::CENTER, "%s", left_label);
+        printf_r(154, y + 23, id(font_label), left_color, TextAlign::CENTER, "%s", left_value);
+        printf_r(312, y, id(font_tiny), muted, TextAlign::CENTER, "%s", right_label);
+        printf_r(312, y + 23, id(font_label), right_color, TextAlign::CENTER, "%s", right_value);
+      };
+
+      auto draw_provider_shell = [&](const char *name, esphome::image::Image *logo, float usage_percent, Color accent) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(12, 14, 18));
+        draw_progress_ring(usage_percent, accent);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        image_r(233, 56, logo);
+        printf_r(233, 108, id(font_small_value), white, TextAlign::CENTER, "%s", name);
+      };
+
+      auto draw_token_detail_account = [&](const char *name, esphome::image::Image *logo, float total, float input, float output, float cached, float reasoning, float goal, Color accent) {
+        float pct = usage_from_goal(total, goal);
+        draw_provider_shell(name, logo, pct, accent);
+        printf_r(233, 142, id(font_tiny), muted, TextAlign::CENTER, "Tokens today");
+        printf_r(233, 178, id(font_title), accent, TextAlign::CENTER, "%s", tokens(total).c_str());
+        printf_r(118, 211, id(font_tiny), green, TextAlign::LEFT, "Input");
+        printf_r(348, 211, id(font_tiny), red, TextAlign::RIGHT, "Output");
+        draw_split_bar(126, 230, 214, 7, input, output, green, red);
+        draw_stat_pair(255, "Input", tokens(input).c_str(), green, "Output", tokens(output).c_str(), red);
+        draw_stat_pair(303, "Cached", tokens(cached).c_str(), blue, "Reason", tokens(reasoning).c_str(), amber);
+        draw_stat_pair(351, "Left", tokens(left_from_goal(total, goal)).c_str(), accent, "Goal", tokens(goal).c_str(), white);
+      };
+
+      auto draw_router_detail_account = [&]() {
+        float usage_pct = id(openrouter_usage_percent).state;
+        draw_provider_shell("OpenRouter", id(img_openrouter_small), usage_pct, blue);
+        printf_r(233, 142, id(font_tiny), muted, TextAlign::CENTER, "Balance left");
+        printf_r(233, 178, id(font_title), blue, TextAlign::CENTER, "%s", money(id(openrouter_balance_remaining).state).c_str());
+        printf_r(118, 211, id(font_tiny), green, TextAlign::LEFT, "Prompt");
+        printf_r(348, 211, id(font_tiny), red, TextAlign::RIGHT, "Completion");
+        draw_split_bar(126, 230, 214, 7, id(openrouter_activity_prompt_tokens).state, id(openrouter_activity_completion_tokens).state, green, red);
+        draw_stat_pair(255, "Today", money(id(openrouter_cost_today).state).c_str(), green, "Keys", tokens(id(openrouter_key_count).state).c_str(), white);
+        draw_stat_pair(303, "Hist In", tokens(id(openrouter_activity_prompt_tokens).state).c_str(), green, "Hist Out", tokens(id(openrouter_activity_completion_tokens).state).c_str(), red);
+        draw_stat_pair(351, "Month", money(id(openrouter_cost_month).state).c_str(), blue, "Req", tokens(id(openrouter_activity_requests).state).c_str(), amber);
+      };
+
+      auto draw_openwebui_detail_account = [&]() {
+        float tokens_today = id(openwebui_tokens_today).state;
+        float goal = ktokens_to_tokens(id(openwebui_daily_token_goal).state);
+        float pct = usage_from_goal(tokens_today, goal);
+        draw_provider_shell("Open WebUI", id(img_openwebui_small), pct, red);
+        printf_r(233, 142, id(font_tiny), muted, TextAlign::CENTER, "Tokens today");
+        printf_r(233, 178, id(font_title), red, TextAlign::CENTER, "%s", tokens(tokens_today).c_str());
+        printf_r(118, 211, id(font_tiny), green, TextAlign::LEFT, "Input");
+        printf_r(348, 211, id(font_tiny), red, TextAlign::RIGHT, "Output");
+        draw_split_bar(126, 230, 214, 7, id(openwebui_input_tokens_today).state, id(openwebui_output_tokens_today).state, green, red);
+        draw_stat_pair(255, "Input", tokens(id(openwebui_input_tokens_today).state).c_str(), green, "Output", tokens(id(openwebui_output_tokens_today).state).c_str(), red);
+        draw_stat_pair(303, "Chats", tokens(id(openwebui_chats_today).state).c_str(), amber, "Models", tokens(id(openwebui_models_today).state).c_str(), blue);
+        draw_stat_pair(351, "Active", tokens(id(openwebui_active_users).state).c_str(), white, "Use", percent(pct).c_str(), red);
+      };
+
+      auto draw_overview_metric = [&](int cx, int cy, const char *label, const char *value, Color color) {
+        printf_r(cx, cy, id(font_tiny), muted, TextAlign::CENTER, "%s", label);
+        printf_r(cx, cy + 23, id(font_label), color, TextAlign::CENTER, "%s", value);
       };
 
       // Full-screen layout for token-based accounts (Codex, Claude Code):
@@ -1280,7 +1478,16 @@ display:
       if (id(current_screen) == 1) {
         float codex_used = id(openai_tokens_today).state;
         float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
-        draw_token_account("Codex", id(img_openai_compact), left_from_goal(codex_used, codex_goal), usage_from_goal(codex_used, codex_goal), "Used today", green);
+        draw_token_detail_account(
+          "Codex",
+          id(img_openai_small),
+          codex_used,
+          id(openai_input_tokens_today).state,
+          id(openai_output_tokens_today).state,
+          id(openai_cached_input_tokens_today).state,
+          id(openai_reasoning_output_tokens_today).state,
+          codex_goal,
+          green);
         draw_footer(1, green);
         return;
       }
@@ -1288,30 +1495,32 @@ display:
       if (id(current_screen) == 2) {
         float claude_used = id(anthropic_tokens_today).state;
         float claude_goal = ktokens_to_tokens(id(claude_daily_token_goal).state);
-        draw_token_account("Claude Code", id(img_anthropic_compact), left_from_goal(claude_used, claude_goal), usage_from_goal(claude_used, claude_goal), "Used today", amber);
+        draw_token_detail_account(
+          "Claude Code",
+          id(img_anthropic_small),
+          claude_used,
+          id(anthropic_input_tokens_today).state,
+          id(anthropic_output_tokens_today).state,
+          id(anthropic_cache_read_tokens_today).state + id(anthropic_cache_creation_tokens_today).state,
+          0.0f,
+          claude_goal,
+          amber);
         draw_footer(2, amber);
         return;
       }
       // Screen 3: OpenRouter remaining credit, blue accent.
       if (id(current_screen) == 3) {
-        draw_money_account("OpenRouter", id(img_openrouter_compact), id(openrouter_balance_remaining).state, id(openrouter_usage_percent).state, blue);
+        draw_router_detail_account();
         draw_footer(3, blue);
         return;
       }
       // Screen 4: Open WebUI self-hosted stats, red accent.
       if (id(current_screen) == 4) {
-        draw_openwebui_account(
-          id(openwebui_tokens_today).state,
-          id(openwebui_chats_today).state,
-          ktokens_to_tokens(id(openwebui_daily_token_goal).state));
+        draw_openwebui_detail_account();
         draw_footer(4, red);
         return;
       }
       // Screen 5: Overview - four account arcs + four small tiles + center clock.
-      it.fill(black);
-      filled_circle_r(233, 233, 208, Color(10, 13, 16));
-      // Quadrant arcs: top-left=Codex, top-right=Claude, bottom-left=OpenRouter,
-      // bottom-right=Open WebUI. (Angle 0 is at 3 o'clock, increasing CW.)
       float codex_used = id(openai_tokens_today).state;
       float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
       float codex_pct = usage_from_goal(codex_used, codex_goal);
@@ -1321,21 +1530,64 @@ display:
       float owui_used = id(openwebui_tokens_today).state;
       float owui_goal = ktokens_to_tokens(id(openwebui_daily_token_goal).state);
       float owui_pct = usage_from_goal(owui_used, owui_goal);
-      draw_quarter_usage_arc(180, 270, codex_pct, green);
-      draw_quarter_usage_arc(270, 360, claude_pct, amber);
-      draw_quarter_usage_arc(90, 180, id(openrouter_usage_percent).state, blue);
-      draw_quarter_usage_arc(0, 90, owui_pct, red);
+      if (id(current_screen) == 5) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(10, 13, 16));
+        // Quadrant arcs: top-left=Codex, top-right=Claude, bottom-left=OpenRouter,
+        // bottom-right=Open WebUI. (Angle 0 is at 3 o'clock, increasing CW.)
+        draw_quarter_usage_arc(180, 270, codex_pct, green);
+        draw_quarter_usage_arc(270, 360, claude_pct, amber);
+        draw_quarter_usage_arc(90, 180, id(openrouter_key_usage_percent).state, blue);
+        draw_quarter_usage_arc(0, 90, owui_pct, red);
+        draw_auto_rotate_timer_ring();
+        line_r(233, 32, 233, 434, Color(42, 47, 58));
+        line_r(32, 233, 434, 233, Color(42, 47, 58));
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        draw_overview_clock(id(home_assistant_time).now());
+        draw_overview_tile(148, 135, "Codex", id(img_openai_small), tokens(codex_used).c_str(), codex_pct, green);
+        draw_overview_tile(318, 135, "Claude", id(img_anthropic_small), tokens(claude_used).c_str(), claude_pct, amber);
+        draw_overview_tile(148, 313, "Router", id(img_openrouter_small), money(id(openrouter_key_limit_remaining).state).c_str(), id(openrouter_key_usage_percent).state, blue);
+        draw_overview_tile(318, 313, "WebUI", id(img_openwebui_small), tokens(owui_used).c_str(), owui_pct, red);
+        draw_footer(5, white);
+        return;
+      }
+
+      // Screen 6: I/O mix overview across all providers.
+      if (id(current_screen) == 6) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(10, 13, 16));
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        printf_r(233, 74, id(font_title), white, TextAlign::CENTER, "I/O Mix");
+        float total_input = id(openai_input_tokens_today).state + id(anthropic_input_tokens_today).state + id(openwebui_input_tokens_today).state + id(openrouter_activity_prompt_tokens).state;
+        float total_output = id(openai_output_tokens_today).state + id(anthropic_output_tokens_today).state + id(openwebui_output_tokens_today).state + id(openrouter_activity_completion_tokens).state;
+        float total_all = total_input + total_output;
+        printf_r(233, 118, id(font_tiny), muted, TextAlign::CENTER, "All visible sources");
+        printf_r(233, 162, id(font_title), white, TextAlign::CENTER, "%s", tokens(total_all).c_str());
+        draw_split_bar(126, 192, 214, 7, total_input, total_output, green, red);
+        draw_stat_pair(218, "Input", tokens(total_input).c_str(), green, "Output", tokens(total_output).c_str(), red);
+        draw_stat_pair(276, "Cached", tokens(id(openai_cached_input_tokens_today).state + id(anthropic_cache_creation_tokens_today).state + id(anthropic_cache_read_tokens_today).state).c_str(), blue, "Reason", tokens(id(openai_reasoning_output_tokens_today).state + id(openrouter_activity_reasoning_tokens).state).c_str(), amber);
+        draw_stat_pair(334, "Router $", money(id(openrouter_cost_today).state).c_str(), blue, "WebUI %", percent(id(openwebui_output_token_percent_today).state).c_str(), red);
+        draw_footer(6, white);
+        return;
+      }
+
+      // Screen 7: Activity overview with today's totals and provider balance.
+      it.fill(black);
+      filled_circle_r(233, 233, 208, Color(10, 13, 16));
       draw_auto_rotate_timer_ring();
-      // Cross-hair separating the four quadrants.
-      line_r(233, 32, 233, 434, Color(42, 47, 58));
-      line_r(32, 233, 434, 233, Color(42, 47, 58));
       circle_r(233, 233, 206, Color(42, 47, 58));
-      draw_overview_clock(id(home_assistant_time).now());
-      draw_overview_tile(148, 135, "Codex", id(img_openai_small), tokens(left_from_goal(codex_used, codex_goal)).c_str(), codex_pct, green);
-      draw_overview_tile(318, 135, "Claude", id(img_anthropic_small), tokens(left_from_goal(claude_used, claude_goal)).c_str(), claude_pct, amber);
-      draw_overview_tile(148, 313, "Router", id(img_openrouter_small), money(id(openrouter_balance_remaining).state).c_str(), id(openrouter_usage_percent).state, blue);
-      draw_overview_tile(318, 313, "WebUI", id(img_openwebui_small), tokens(owui_used).c_str(), owui_pct, red);
-      draw_footer(5, white);
+      printf_r(233, 70, id(font_title), white, TextAlign::CENTER, "Today");
+      float live_tokens = codex_used + claude_used + owui_used;
+      printf_r(233, 130, id(font_tiny), muted, TextAlign::CENTER, "Local plus self-hosted");
+      printf_r(233, 170, id(font_title), green, TextAlign::CENTER, "%s", tokens(live_tokens).c_str());
+      draw_overview_metric(154, 228, "Codex", tokens(codex_used).c_str(), green);
+      draw_overview_metric(312, 228, "Claude", tokens(claude_used).c_str(), amber);
+      draw_overview_metric(154, 286, "WebUI", tokens(owui_used).c_str(), red);
+      draw_overview_metric(312, 286, "Router", money(id(openrouter_cost_today).state).c_str(), blue);
+      draw_overview_metric(154, 344, "Chats", tokens(id(openwebui_chats_today).state).c_str(), red);
+      draw_overview_metric(312, 344, "Keys", tokens(id(openrouter_key_count).state).c_str(), blue);
+      draw_footer(7, white);
       return;
 
 # CST9217 capacitive touchscreen. The on_touch / on_update / on_release
@@ -1422,13 +1674,15 @@ touchscreen:
               if (screen == 3) return id(show_openrouter).state;
               if (screen == 4) return id(show_openwebui).state;
               if (screen == 5) return id(show_overview).state;
+              if (screen == 6) return id(show_overview).state;
+              if (screen == 7) return id(show_overview).state;
               return false;
             };
 
             // Left swipe moves forward, right swipe moves backward.
             const bool forward = dx < 0;
-            for (int i = 0; i < 6; i++) {
-              id(current_screen) = forward ? (id(current_screen) + 1) % 6 : (id(current_screen) + 5) % 6;
+            for (int i = 0; i < 8; i++) {
+              id(current_screen) = forward ? (id(current_screen) + 1) % 8 : (id(current_screen) + 7) % 8;
               if (enabled(id(current_screen))) break;
             }
 
@@ -1472,6 +1726,8 @@ touchscreen:
             if (screen == 3) return id(show_openrouter).state;
             if (screen == 4) return id(show_openwebui).state;
             if (screen == 5) return id(show_overview).state;
+            if (screen == 6) return id(show_overview).state;
+            if (screen == 7) return id(show_overview).state;
             return false;
           };
 
@@ -1485,8 +1741,8 @@ touchscreen:
           const bool forward = dx < 0;
 
           // Walk forward or backward through the screens, skipping disabled ones.
-          for (int i = 0; i < 6; i++) {
-            id(current_screen) = forward ? (id(current_screen) + 1) % 6 : (id(current_screen) + 5) % 6;
+          for (int i = 0; i < 8; i++) {
+            id(current_screen) = forward ? (id(current_screen) + 1) % 8 : (id(current_screen) + 7) % 8;
             if (enabled(id(current_screen))) break;
           }
           // Reset the auto-rotate timer so the user gets a full dwell on the chosen screen.

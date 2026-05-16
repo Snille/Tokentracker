@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as readline from "readline";
 import * as vscode from "vscode";
 import mqtt, { MqttClient } from "mqtt";
 import sqlite3 from "sqlite3";
@@ -35,10 +36,26 @@ interface UsagePayload {
 
 interface CodexUsage {
   codex_tokens_today: number;
+  codex_input_tokens_today: number;
+  codex_cached_input_tokens_today: number;
+  codex_output_tokens_today: number;
+  codex_reasoning_output_tokens_today: number;
 }
 
 interface ClaudeUsage {
   claude_tokens_today: number;
+  claude_input_tokens_today: number;
+  claude_cache_creation_input_tokens_today: number;
+  claude_cache_read_input_tokens_today: number;
+  claude_output_tokens_today: number;
+}
+
+interface CodexTokenUsage {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+  total_tokens?: number;
 }
 
 const legacySensorIds = [
@@ -141,6 +158,10 @@ async function publishCycle() {
       console.error("TokenTracker Codex read failed", error);
       Object.assign(payload, {
         codex_tokens_today: 0,
+        codex_input_tokens_today: 0,
+        codex_cached_input_tokens_today: 0,
+        codex_output_tokens_today: 0,
+        codex_reasoning_output_tokens_today: 0,
       });
     }
   }
@@ -152,6 +173,10 @@ async function publishCycle() {
       console.error("TokenTracker Claude read failed", error);
       Object.assign(payload, {
         claude_tokens_today: 0,
+        claude_input_tokens_today: 0,
+        claude_cache_creation_input_tokens_today: 0,
+        claude_cache_read_input_tokens_today: 0,
+        claude_output_tokens_today: 0,
       });
     }
   }
@@ -164,7 +189,15 @@ async function publishCycle() {
 async function publishDiscovery(settings: MqttSettings) {
   const sensors: SensorConfig[] = [
     { id: "codex_tokens_today", name: "Codex Tokens Today", unit: "tokens", icon: "mdi:counter" },
+    { id: "codex_input_tokens_today", name: "Codex Input Tokens Today", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
+    { id: "codex_cached_input_tokens_today", name: "Codex Cached Input Tokens Today", unit: "tokens", icon: "mdi:cached" },
+    { id: "codex_output_tokens_today", name: "Codex Output Tokens Today", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
+    { id: "codex_reasoning_output_tokens_today", name: "Codex Reasoning Output Tokens Today", unit: "tokens", icon: "mdi:head-cog-outline" },
     { id: "claude_tokens_today", name: "Claude Code Tokens Today", unit: "tokens", icon: "mdi:counter" },
+    { id: "claude_input_tokens_today", name: "Claude Code Input Tokens Today", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
+    { id: "claude_cache_creation_input_tokens_today", name: "Claude Code Cache Creation Tokens Today", unit: "tokens", icon: "mdi:database-plus-outline" },
+    { id: "claude_cache_read_input_tokens_today", name: "Claude Code Cache Read Tokens Today", unit: "tokens", icon: "mdi:database-eye-outline" },
+    { id: "claude_output_tokens_today", name: "Claude Code Output Tokens Today", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
   ];
 
   for (const sensorId of legacySensorIds) {
@@ -195,10 +228,19 @@ async function publishDiscovery(settings: MqttSettings) {
 }
 
 async function readCodexUsage(): Promise<CodexUsage> {
+  const sessionUsage = await readCodexSessionUsage();
+  if (sessionUsage.codex_tokens_today > 0) {
+    return sessionUsage;
+  }
+
   const dbPath = path.join(os.homedir(), ".codex", "state_5.sqlite");
   if (!fs.existsSync(dbPath)) {
     return {
       codex_tokens_today: 0,
+      codex_input_tokens_today: 0,
+      codex_cached_input_tokens_today: 0,
+      codex_output_tokens_today: 0,
+      codex_reasoning_output_tokens_today: 0,
     };
   }
 
@@ -215,7 +257,67 @@ async function readCodexUsage(): Promise<CodexUsage> {
 
   return {
     codex_tokens_today: tokensToday,
+    codex_input_tokens_today: 0,
+    codex_cached_input_tokens_today: 0,
+    codex_output_tokens_today: 0,
+    codex_reasoning_output_tokens_today: 0,
   };
+}
+
+async function readCodexSessionUsage(): Promise<CodexUsage> {
+  const sessionsPath = path.join(os.homedir(), ".codex", "sessions");
+  const startOfDayMs = new Date().setHours(0, 0, 0, 0);
+  const usage: CodexUsage = {
+    codex_tokens_today: 0,
+    codex_input_tokens_today: 0,
+    codex_cached_input_tokens_today: 0,
+    codex_output_tokens_today: 0,
+    codex_reasoning_output_tokens_today: 0,
+  };
+
+  if (!fs.existsSync(sessionsPath)) {
+    return usage;
+  }
+
+  for (const filePath of walkFiles(sessionsPath, ".jsonl")) {
+    if (!path.basename(filePath).startsWith("rollout-")) continue;
+
+    const stat = fs.statSync(filePath);
+    if (stat.mtimeMs < startOfDayMs) continue;
+
+    const latestUsage = await readLatestCodexTokenUsage(filePath);
+    if (!latestUsage) continue;
+
+    usage.codex_input_tokens_today += numeric(latestUsage.input_tokens);
+    usage.codex_cached_input_tokens_today += numeric(latestUsage.cached_input_tokens);
+    usage.codex_output_tokens_today += numeric(latestUsage.output_tokens);
+    usage.codex_reasoning_output_tokens_today += numeric(latestUsage.reasoning_output_tokens);
+    usage.codex_tokens_today += numeric(latestUsage.total_tokens);
+  }
+
+  return usage;
+}
+
+async function readLatestCodexTokenUsage(filePath: string): Promise<CodexTokenUsage | undefined> {
+  let latestUsage: CodexTokenUsage | undefined;
+  const reader = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+
+  for await (const line of reader) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event?.payload?.type === "token_count") {
+        latestUsage = event.payload.info?.total_token_usage;
+      }
+    } catch {
+      // Ignore partial/corrupt log lines.
+    }
+  }
+
+  return latestUsage;
 }
 
 async function readClaudeUsage(): Promise<ClaudeUsage> {
@@ -223,11 +325,18 @@ async function readClaudeUsage(): Promise<ClaudeUsage> {
   if (!fs.existsSync(projectsPath)) {
     return {
       claude_tokens_today: 0,
+      claude_input_tokens_today: 0,
+      claude_cache_creation_input_tokens_today: 0,
+      claude_cache_read_input_tokens_today: 0,
+      claude_output_tokens_today: 0,
     };
   }
 
   const startOfDayMs = new Date().setHours(0, 0, 0, 0);
-  let totalTokens = 0;
+  let inputTokens = 0;
+  let cacheCreationInputTokens = 0;
+  let cacheReadInputTokens = 0;
+  let outputTokens = 0;
 
   for (const filePath of walkFiles(projectsPath, ".jsonl")) {
     const stat = fs.statSync(filePath);
@@ -239,10 +348,10 @@ async function readClaudeUsage(): Promise<ClaudeUsage> {
       try {
         const event = JSON.parse(line);
         for (const usage of findUsageObjects(event)) {
-          totalTokens += numeric(usage.input_tokens);
-          totalTokens += numeric(usage.output_tokens);
-          totalTokens += numeric(usage.cache_creation_input_tokens);
-          totalTokens += numeric(usage.cache_read_input_tokens);
+          inputTokens += numeric(usage.input_tokens);
+          outputTokens += numeric(usage.output_tokens);
+          cacheCreationInputTokens += numeric(usage.cache_creation_input_tokens);
+          cacheReadInputTokens += numeric(usage.cache_read_input_tokens);
         }
       } catch {
         // Ignore partial/corrupt log lines.
@@ -251,7 +360,11 @@ async function readClaudeUsage(): Promise<ClaudeUsage> {
   }
 
   return {
-    claude_tokens_today: totalTokens,
+    claude_tokens_today: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
+    claude_input_tokens_today: inputTokens,
+    claude_cache_creation_input_tokens_today: cacheCreationInputTokens,
+    claude_cache_read_input_tokens_today: cacheReadInputTokens,
+    claude_output_tokens_today: outputTokens,
   };
 }
 

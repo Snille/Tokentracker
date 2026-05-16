@@ -2,7 +2,7 @@
   "name": "tokentracker-vscode",
   "displayName": "TokenTracker",
   "description": "Publishes local Codex and Claude usage signals to Home Assistant over MQTT.",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "publisher": "snille",
   "engines": {
     "vscode": "^1.95.0"
@@ -53,7 +53,7 @@
         "tokentracker.codex.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Publish local Codex usage from ~/.codex/state_5.sqlite."
+          "description": "Publish local Codex usage from ~/.codex sessions and state database."
         },
         "tokentracker.claude.enabled": {
           "type": "boolean",
@@ -62,7 +62,7 @@
         },
         "tokentracker.version": {
           "type": "string",
-          "default": "1.1.0",
+          "default": "1.2.1",
           "readOnly": true,
           "description": "Installed TokenTracker extension version."
         }

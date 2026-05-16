@@ -1,5 +1,11 @@
-# TokenTracker HA package version: 1.1.0
+# TokenTracker HA package version: 1.2.1
 # OpenRouter statistics for the Token Tracker.
+#
+# openrouter_api_bearer1..5 are tracked as separate key-limit sources, then
+# combined into the legacy display-facing sensors. The combined templates only
+# count unique key labels, so unused slots can point to the same bearer without
+# inflating totals.
+# /activity exposes prompt/completion token history for completed UTC days.
 
 rest:
   - resource: https://openrouter.ai/api/v1/credits
@@ -21,14 +27,14 @@ rest:
     method: GET
     scan_interval: 300
     headers:
-      Authorization: !secret openrouter_api_bearer
+      Authorization: !secret openrouter_api_bearer1
       Content-Type: application/json
     sensor:
-      - name: OpenRouter Key Raw
-        unique_id: tokentracker_openrouter_key_raw
+      - name: OpenRouter Key 1 Raw
+        unique_id: tokentracker_openrouter_key_1_raw
         value_template: "{{ value_json.data.label | default('unavailable') }}"
         json_attributes_path: "$.data"
-        json_attributes:
+        json_attributes: &openrouter_key_attributes
           - label
           - limit
           - limit_remaining
@@ -39,6 +45,149 @@ rest:
           - usage_monthly
           - is_free_tier
           - is_management_key
+
+  - resource: https://openrouter.ai/api/v1/key
+    method: GET
+    scan_interval: 300
+    headers:
+      Authorization: !secret openrouter_api_bearer2
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Key 2 Raw
+        unique_id: tokentracker_openrouter_key_2_raw
+        value_template: "{{ value_json.data.label | default('unavailable') }}"
+        json_attributes_path: "$.data"
+        json_attributes: *openrouter_key_attributes
+
+  - resource: https://openrouter.ai/api/v1/key
+    method: GET
+    scan_interval: 300
+    headers:
+      Authorization: !secret openrouter_api_bearer3
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Key 3 Raw
+        unique_id: tokentracker_openrouter_key_3_raw
+        value_template: "{{ value_json.data.label | default('unavailable') }}"
+        json_attributes_path: "$.data"
+        json_attributes: *openrouter_key_attributes
+
+  - resource: https://openrouter.ai/api/v1/key
+    method: GET
+    scan_interval: 300
+    headers:
+      Authorization: !secret openrouter_api_bearer4
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Key 4 Raw
+        unique_id: tokentracker_openrouter_key_4_raw
+        value_template: "{{ value_json.data.label | default('unavailable') }}"
+        json_attributes_path: "$.data"
+        json_attributes: *openrouter_key_attributes
+
+  - resource: https://openrouter.ai/api/v1/key
+    method: GET
+    scan_interval: 300
+    headers:
+      Authorization: !secret openrouter_api_bearer5
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Key 5 Raw
+        unique_id: tokentracker_openrouter_key_5_raw
+        value_template: "{{ value_json.data.label | default('unavailable') }}"
+        json_attributes_path: "$.data"
+        json_attributes: *openrouter_key_attributes
+
+  - resource: https://openrouter.ai/api/v1/activity
+    method: GET
+    scan_interval: 3600
+    headers:
+      Authorization: !secret openrouter_management_bearer
+      Content-Type: application/json
+    sensor:
+      - name: OpenRouter Activity Prompt Tokens
+        unique_id: tokentracker_openrouter_activity_prompt_tokens
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:arrow-down-bold-circle-outline
+        value_template: >
+          {% set ns = namespace(t=0) %}
+          {% for row in value_json.data | default([]) %}
+            {% set ns.t = ns.t + (row.prompt_tokens | default(0) | int(0)) %}
+          {% endfor %}
+          {{ ns.t }}
+
+      - name: OpenRouter Activity Completion Tokens
+        unique_id: tokentracker_openrouter_activity_completion_tokens
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:arrow-up-bold-circle-outline
+        value_template: >
+          {% set ns = namespace(t=0) %}
+          {% for row in value_json.data | default([]) %}
+            {% set ns.t = ns.t + (row.completion_tokens | default(0) | int(0)) %}
+          {% endfor %}
+          {{ ns.t }}
+
+      - name: OpenRouter Activity Reasoning Tokens
+        unique_id: tokentracker_openrouter_activity_reasoning_tokens
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:head-cog-outline
+        value_template: >
+          {% set ns = namespace(t=0) %}
+          {% for row in value_json.data | default([]) %}
+            {% set ns.t = ns.t + (row.reasoning_tokens | default(0) | int(0)) %}
+          {% endfor %}
+          {{ ns.t }}
+
+      - name: OpenRouter Activity Tokens
+        unique_id: tokentracker_openrouter_activity_tokens
+        unit_of_measurement: tokens
+        state_class: measurement
+        icon: mdi:counter
+        value_template: >
+          {% set ns = namespace(t=0) %}
+          {% for row in value_json.data | default([]) %}
+            {% set ns.t = ns.t + (row.prompt_tokens | default(0) | int(0)) + (row.completion_tokens | default(0) | int(0)) + (row.reasoning_tokens | default(0) | int(0)) %}
+          {% endfor %}
+          {{ ns.t }}
+
+      - name: OpenRouter Activity Requests
+        unique_id: tokentracker_openrouter_activity_requests
+        unit_of_measurement: requests
+        state_class: measurement
+        icon: mdi:counter
+        value_template: >
+          {% set ns = namespace(c=0) %}
+          {% for row in value_json.data | default([]) %}
+            {% set ns.c = ns.c + (row.requests | default(0) | int(0)) %}
+          {% endfor %}
+          {{ ns.c }}
+
+      - name: OpenRouter Activity Cost
+        unique_id: tokentracker_openrouter_activity_cost
+        unit_of_measurement: USD
+        device_class: monetary
+        state_class: measurement
+        icon: mdi:cash-clock
+        value_template: >
+          {% set ns = namespace(c=0) %}
+          {% for row in value_json.data | default([]) %}
+            {% set ns.c = ns.c + (row.usage | default(0) | float(0)) %}
+          {% endfor %}
+          {{ ns.c | round(6) }}
+
+      - name: OpenRouter Activity Latest Date
+        unique_id: tokentracker_openrouter_activity_latest_date
+        icon: mdi:calendar-clock
+        value_template: >
+          {% set rows = value_json.data | default([]) %}
+          {% if rows | length > 0 %}
+            {{ rows[0].date | default('unknown') }}
+          {% else %}
+            unknown
+          {% endif %}
 
 template:
   - sensor:
@@ -85,9 +234,26 @@ template:
 
       - name: OpenRouter Key Limit Remaining
         unique_id: tokentracker_openrouter_key_limit_remaining
-        availability: "{{ state_attr('sensor.openrouter_key_raw', 'limit_remaining') is number }}"
+        availability: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(c=0) %}
+          {% for key in keys %}
+            {% if state_attr(key, 'label') %}
+              {% set ns.c = ns.c + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.c > 0 }}
         state: >
-          {{ state_attr('sensor.openrouter_key_raw', 'limit_remaining') | float(0) | round(4) }}
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(total=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.total = ns.total + (state_attr(key, 'limit_remaining') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(4) }}
         unit_of_measurement: USD
         device_class: monetary
         state_class: measurement
@@ -95,7 +261,17 @@ template:
 
       - name: OpenRouter Key Total Usage
         unique_id: tokentracker_openrouter_key_total_usage
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage') | float(0) | round(4) }}"
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(total=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.total = ns.total + (state_attr(key, 'usage') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(4) }}
         unit_of_measurement: USD
         device_class: monetary
         state_class: measurement
@@ -104,10 +280,18 @@ template:
       - name: OpenRouter Key Usage Percent
         unique_id: tokentracker_openrouter_key_usage_percent
         state: >
-          {% set limit = state_attr('sensor.openrouter_key_raw', 'limit') %}
-          {% set remaining = state_attr('sensor.openrouter_key_raw', 'limit_remaining') %}
-          {% if limit is number and remaining is number and limit > 0 %}
-            {{ ([((limit - remaining) / limit) * 100, 100] | min) | round(1) }}
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(limit=0, remaining=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.limit = ns.limit + (state_attr(key, 'limit') | float(0)) %}
+              {% set ns.remaining = ns.remaining + (state_attr(key, 'limit_remaining') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {% if ns.limit > 0 %}
+            {{ ([((ns.limit - ns.remaining) / ns.limit) * 100, 100] | min) | round(1) }}
           {% else %}
             {{ states('sensor.openrouter_usage_percent') | float(0) | round(1) }}
           {% endif %}
@@ -117,8 +301,26 @@ template:
 
       - name: OpenRouter Key Limit
         unique_id: tokentracker_openrouter_key_limit
-        availability: "{{ state_attr('sensor.openrouter_key_raw', 'limit') is number }}"
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'limit') | float(0) | round(4) }}"
+        availability: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(c=0) %}
+          {% for key in keys %}
+            {% if state_attr(key, 'label') %}
+              {% set ns.c = ns.c + 1 %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.c > 0 }}
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(total=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.total = ns.total + (state_attr(key, 'limit') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(4) }}
         unit_of_measurement: USD
         device_class: monetary
         state_class: measurement
@@ -126,7 +328,17 @@ template:
 
       - name: OpenRouter Cost Today
         unique_id: tokentracker_openrouter_cost_today
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage_daily') | float(0) | round(4) }}"
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(total=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.total = ns.total + (state_attr(key, 'usage_daily') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(6) }}
         unit_of_measurement: USD
         device_class: monetary
         state_class: measurement
@@ -134,7 +346,17 @@ template:
 
       - name: OpenRouter Cost Week
         unique_id: tokentracker_openrouter_cost_week
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage_weekly') | float(0) | round(4) }}"
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(total=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.total = ns.total + (state_attr(key, 'usage_weekly') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(6) }}
         unit_of_measurement: USD
         device_class: monetary
         state_class: measurement
@@ -142,7 +364,17 @@ template:
 
       - name: OpenRouter Cost Month
         unique_id: tokentracker_openrouter_cost_month
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'usage_monthly') | float(0) | round(4) }}"
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(total=0, labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+              {% set ns.total = ns.total + (state_attr(key, 'usage_monthly') | float(0)) %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.total | round(6) }}
         unit_of_measurement: USD
         device_class: monetary
         state_class: measurement
@@ -156,12 +388,69 @@ template:
         icon: mdi:counter
 
   - sensor:
+      - name: OpenRouter Key Count
+        unique_id: tokentracker_openrouter_key_count
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.labels | length }}
+        icon: mdi:key-chain
+
       - name: OpenRouter Key Label
         unique_id: tokentracker_openrouter_key_label
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'label') | default('', true) }}"
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(labels=[]) %}
+          {% for key in keys %}
+            {% set label = state_attr(key, 'label') %}
+            {% if label and label not in ns.labels %}
+              {% set ns.labels = ns.labels + [label] %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.labels | join(', ') }}
+        icon: mdi:key-outline
+
+      - name: OpenRouter Key 1 Label
+        unique_id: tokentracker_openrouter_key_1_label
+        state: "{{ state_attr('sensor.openrouter_key_1_raw', 'label') | default('', true) }}"
+        icon: mdi:key-outline
+
+      - name: OpenRouter Key 2 Label
+        unique_id: tokentracker_openrouter_key_2_label
+        state: "{{ state_attr('sensor.openrouter_key_2_raw', 'label') | default('', true) }}"
+        icon: mdi:key-outline
+
+      - name: OpenRouter Key 3 Label
+        unique_id: tokentracker_openrouter_key_3_label
+        state: "{{ state_attr('sensor.openrouter_key_3_raw', 'label') | default('', true) }}"
+        icon: mdi:key-outline
+
+      - name: OpenRouter Key 4 Label
+        unique_id: tokentracker_openrouter_key_4_label
+        state: "{{ state_attr('sensor.openrouter_key_4_raw', 'label') | default('', true) }}"
+        icon: mdi:key-outline
+
+      - name: OpenRouter Key 5 Label
+        unique_id: tokentracker_openrouter_key_5_label
+        state: "{{ state_attr('sensor.openrouter_key_5_raw', 'label') | default('', true) }}"
         icon: mdi:key-outline
 
       - name: OpenRouter Limit Reset
         unique_id: tokentracker_openrouter_limit_reset
-        state: "{{ state_attr('sensor.openrouter_key_raw', 'limit_reset') | default('', true) }}"
+        state: >
+          {% set keys = ['sensor.openrouter_key_1_raw', 'sensor.openrouter_key_2_raw', 'sensor.openrouter_key_3_raw', 'sensor.openrouter_key_4_raw', 'sensor.openrouter_key_5_raw'] %}
+          {% set ns = namespace(reset='') %}
+          {% for key in keys %}
+            {% set reset = state_attr(key, 'limit_reset') %}
+            {% if reset and not ns.reset %}
+              {% set ns.reset = reset %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.reset }}
         icon: mdi:calendar-sync

@@ -1,6 +1,6 @@
 # Token Tracker
 
-Project version: `0.1.0`
+Project version: `0.2.0`
 
 Token Tracker är en personlig AI-usage-display för Waveshare ESP32-S3 Touch
 AMOLED 1.75, Home Assistant och en liten VS Code-extension.
@@ -18,10 +18,10 @@ ut entity-id:n, MQTT-inställningar och API-secrets.
 
 ## Versions
 
-- Project: `0.1.0` (`VERSION`)
-- ESPHome display: `1.7.5`
-- Home Assistant package: `1.1.0`
-- VS Code extension: `1.1.0`
+- Project: `0.2.0` (`VERSION`)
+- ESPHome display: `1.8.1`
+- Home Assistant package: `1.2.1`
+- VS Code extension: `1.2.1`
 
 Se `HISTORY.md` för ändringshistorik.
 
@@ -32,27 +32,31 @@ procent. Maxvärden justeras som config-entities på ESPHome-enheten.
 
 | Källa | HA-entity | Ansvar |
 | --- | --- | --- |
-| Codex | `sensor.tokentracker_vs_code_codex_tokens_today` | VS Code-extension läser lokal Codex SQLite och publicerar tokens idag via MQTT |
+| Codex | `sensor.tokentracker_vs_code_codex_tokens_today` | VS Code-extension läser lokala Codex sessions/SQLite och publicerar tokens idag via MQTT |
 | Claude Code | `sensor.tokentracker_vs_code_claude_code_tokens_today` | VS Code-extension läser lokala Claude JSONL-loggar och publicerar tokens idag via MQTT |
 | Open WebUI | `sensor.openwebui_tokens_today` | HA REST package hämtar tokens idag från Open WebUI analytics |
-| OpenRouter | `sensor.openrouter_key_limit_remaining`, `sensor.openrouter_key_usage_percent` | HA REST package hämtar credits/key-data från OpenRouter |
+| OpenRouter | `sensor.openrouter_key_limit_remaining`, `sensor.openrouter_key_usage_percent` | HA REST package hämtar credits/key-data från flera OpenRouter-nycklar |
 
-VS Code-extensionen är medvetet "raw-only": den skickar bara dagens tokenvärden.
+VS Code-extensionen är medvetet "raw-only": den skickar bara dagens tokenvärden
+och underfält för input/output/cache/reasoning där källan har dem.
 `tokens left`, usage-percent och maxgränser ligger i ESPHome/HA så de kan ändras
 på Token Tracker-enheten.
 
 ## ESPHome-display
 
-Nuvarande ESPHome-version: `1.7.5`.
+Nuvarande ESPHome-version: `1.8.1`.
 
 Displayen visar:
 
 - Klocka.
-- Codex.
-- Claude Code.
-- OpenRouter.
-- Open WebUI.
-- Overview med Codex, Claude Code, OpenRouter, Open WebUI och analog klocka.
+- Codex med input/output/cache/reasoning.
+- Claude Code med input/output/cache.
+- OpenRouter med account balance, key-count, key usage och activity-historik.
+- Open WebUI med input/output, chats, aktiva användare och modellräkning.
+- Quadrant overview med Codex, Claude Code, OpenRouter, Open WebUI och analog
+  klocka.
+- I/O Mix med input/output/cache/reasoning över alla källor.
+- Today med dagens live-tokenvärden, OpenRouter-kostnad, chats och key-count.
 
 Styrning:
 
@@ -75,7 +79,7 @@ Viktiga config-entities på ESPHome-enheten:
 - `WebUI Max` i ktokens.
 - `Display Brightness Percent`.
 - `Screen Interval` för singel-skärmarna.
-- `Overview Screen Interval` för overview/kvadrant-skärmen.
+- `Overview Screen Interval` för quadrant-, I/O Mix- och Today-skärmarna.
 - `Display Rotation`.
 - `Auto Orientation`.
 - `Auto Rotate Screens`.
@@ -116,16 +120,19 @@ Detaljer om secrets, endpoints och sensorer finns i
 
 Extensionen finns i `vscode-extension/`.
 
-Installera senast byggda VSIX via:
+Installera en byggd VSIX via:
 
 ```text
 Extensions -> ... -> Install from VSIX...
 ```
 
-Aktuell VSIX:
+Bygg en installerbar VSIX vid behov med:
 
-```text
-vscode-extension/tokentracker-vscode-1.1.0.vsix
+```powershell
+cd vscode-extension
+npm install
+npm run compile
+npm run package
 ```
 
 Extensionen kör bara när VS Code körs. Den publicerar MQTT discovery och state
@@ -135,7 +142,8 @@ till samma broker som Home Assistant använder.
 
 Detta repo bör inte innehålla riktiga API-nycklar eller tokens. Lokala filer som
 `.ai-tokens`, `.ha-token`, VSIX-filer, `node_modules`, `dist` och lokala VS
-Code-inställningar ligger i `.gitignore`.
+Code-inställningar ligger i `.gitignore`. Byggda VSIX-filer är lokala artifacts
+och ska inte checkas in.
 
 Om detta läggs upp publikt bör det beskrivas som ett exempelprojekt eller en
 referensimplementation. Andra kan använda det, men behöver minst ändra:

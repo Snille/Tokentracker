@@ -1,5 +1,5 @@
 # Open WebUI statistics for the Token Tracker.
-# TokenTracker HA package version: 1.1.0
+# TokenTracker HA package version: 1.2.1
 #
 # Requires a bearer token from an admin account in Open WebUI. Add to secrets.yaml:
 #   openwebui_bearer: "Bearer eyJhbGciOi..."
@@ -171,3 +171,40 @@ rest:
         state_class: measurement
         icon: mdi:arrow-up-bold-circle-outline
         value_template: "{{ value_json.total_output_tokens | default(0) | int(0) }}"
+
+      - name: OpenWebUI Models Today
+        unique_id: tokentracker_openwebui_models_today
+        unit_of_measurement: models
+        state_class: measurement
+        icon: mdi:robot-outline
+        value_template: "{{ value_json.models | default([]) | length }}"
+
+template:
+  - sensor:
+      - name: OpenWebUI Input Token Percent Today
+        unique_id: tokentracker_openwebui_input_token_percent_today
+        state: >
+          {% set total = states('sensor.openwebui_tokens_today') | float(0) %}
+          {% set input = states('sensor.openwebui_input_tokens_today') | float(0) %}
+          {% if total > 0 %}
+            {{ (input / total * 100) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:percent
+
+      - name: OpenWebUI Output Token Percent Today
+        unique_id: tokentracker_openwebui_output_token_percent_today
+        state: >
+          {% set total = states('sensor.openwebui_tokens_today') | float(0) %}
+          {% set output = states('sensor.openwebui_output_tokens_today') | float(0) %}
+          {% if total > 0 %}
+            {{ (output / total * 100) | round(1) }}
+          {% else %}
+            0
+          {% endif %}
+        unit_of_measurement: "%"
+        state_class: measurement
+        icon: mdi:percent
