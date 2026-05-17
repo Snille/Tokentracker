@@ -2,11 +2,11 @@
 
 Version: 1.2.2
 
-Publicerar lokala Codex- och Claude Code-tokenräknare till Home Assistant via
+Publishes local Codex and Claude Code token counters to Home Assistant via
 MQTT discovery.
 
-Extensionen är medvetet "raw-only". Den publicerar lokala tokenvärden för
-aktuell vecka:
+The extension is intentionally "raw-only". It publishes local token values
+for the current week:
 
 - `sensor.tokentracker_vs_code_codex_tokens_week`
 - `sensor.tokentracker_vs_code_codex_input_tokens_week`
@@ -20,19 +20,20 @@ aktuell vecka:
 - `sensor.tokentracker_vs_code_claude_code_output_tokens_week`
 - `sensor.tokentracker_vs_code_updated_at_epoch`
 
-Maxgränser, tokens kvar och procent räknas i ESPHome/HA via Token
-Tracker-enhetens egna config-entities. Token Tracker-displayens konfigurerbara
-5h-perioder räknas på ESP:n från veckosensorerna och de sparade reset-baselines.
+Max limits, tokens remaining and percent are computed in ESPHome/HA via the
+Token Tracker device's own config entities. The Token Tracker display's
+configurable 5h periods are computed on the ESP from the weekly sensors and
+the saved reset baselines.
 
 ## MQTT Payload
 
-State publiceras retained till:
+State is published retained to:
 
 ```text
 tokentracker/state
 ```
 
-Exempel:
+Example:
 
 ```json
 {
@@ -51,13 +52,13 @@ Exempel:
 }
 ```
 
-Om Codex eller Claude är avstängt i inställningarna utelämnas motsvarande fält.
-Om en lokal logg/databas inte kan läsas publiceras `0` för den källan och felet
-loggas i VS Code developer console.
+If Codex or Claude is disabled in settings, the matching fields are omitted.
+If a local log/database cannot be read, `0` is published for that source and
+the error is logged in the VS Code developer console.
 
 ## Settings
 
-Lägg in i VS Code settings:
+Add to your VS Code settings:
 
 ```json
 {
@@ -70,40 +71,40 @@ Lägg in i VS Code settings:
 }
 ```
 
-`publishIntervalSeconds` har minimum 10 sekunder.
+`publishIntervalSeconds` has a minimum of 10 seconds.
 
-## Datakällor
+## Data sources
 
 Codex:
 
-- Läser `~/.codex/sessions/**/*.jsonl`.
-- Räknar deltan mellan `token_count`-händelser och summerar aktuell vecka.
-- Faller tillbaka till `~/.codex/state_5.sqlite` och `threads.tokens_used` om
-  sessionsfilerna saknar token events.
+- Reads `~/.codex/sessions/**/*.jsonl`.
+- Counts deltas between `token_count` events and sums up the current week.
+- Falls back to `~/.codex/state_5.sqlite` and `threads.tokens_used` if the
+  session files lack token events.
 
 Claude Code:
 
-- Läser `~/.claude/projects/**/*.jsonl`.
-- Summerar `usage.input_tokens`, `usage.output_tokens`,
-  `usage.cache_creation_input_tokens` och `usage.cache_read_input_tokens` för
-  händelser från aktuell vecka.
+- Reads `~/.claude/projects/**/*.jsonl`.
+- Sums `usage.input_tokens`, `usage.output_tokens`,
+  `usage.cache_creation_input_tokens` and `usage.cache_read_input_tokens` for
+  events from the current week.
 
-Extensionen kör bara medan VS Code körs.
+The extension only runs while VS Code is running.
 
 ## Legacy Cleanup
 
-På MQTT-connect skickar extensionen tomma retained discovery-configs för äldre
-sensorer som inte längre används, exempelvis:
+On MQTT connect, the extension publishes empty retained discovery configs for
+older sensors that are no longer used, for example:
 
 - `tokens_left`
 - `usage_percent`
 - current thread/model/project
 - totals
 - collector status/version
-- gamla Codex/Claude `*_today`-sensorer
-- tidigare rullande Codex/Claude `*_5h`-sensorer
+- old Codex/Claude `*_today` sensors
+- previous rolling Codex/Claude `*_5h` sensors
 
-Det gör att Home Assistant kan städa bort de gamla MQTT discovery-entiteterna.
+This lets Home Assistant clean up the old MQTT discovery entities.
 
 ## Build
 
@@ -113,13 +114,14 @@ npm run compile
 npm run package
 ```
 
-Byggd VSIX hamnar lokalt i extension-katalogen och ignoreras av Git:
+The built VSIX ends up locally in the extension directory and is ignored by
+Git:
 
 ```text
 tokentracker-vscode-1.2.2.vsix
 ```
 
-Installera i VS Code via:
+Install in VS Code via:
 
 ```text
 Extensions -> ... -> Install from VSIX...

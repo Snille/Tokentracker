@@ -1,51 +1,51 @@
-# Installera Token Tracker från scratch
+# Install Token Tracker from scratch
 
-Den här guiden utgår från att du har:
+This guide assumes you have:
 
-- Waveshare ESP32-S3 Touch AMOLED 1.75.
-- Home Assistant med ESPHome.
-- VS Code på datorn där du kör Codex och/eller Claude Code.
-- Tillgång till detta git-repo.
-- Node.js LTS på datorn där VS Code-extensionen ska byggas.
-- En MQTT-broker som Home Assistant kan läsa från, till exempel Mosquitto
+- A Waveshare ESP32-S3 Touch AMOLED 1.75.
+- Home Assistant with ESPHome.
+- VS Code on the machine where you run Codex and/or Claude Code.
+- Access to this git repo.
+- Node.js LTS on the machine where the VS Code extension will be built.
+- An MQTT broker that Home Assistant can read from, for example the Mosquitto
   broker add-on.
 
-Token Tracker består av tre delar:
+Token Tracker has three parts:
 
-- ESPHome-displayen i `esphome/round-token-tracker.yaml`.
-- Home Assistant packages för OpenRouter/Open WebUI i
+- The ESPHome display in `esphome/round-token-tracker.yaml`.
+- Home Assistant packages for OpenRouter / Open WebUI in
   `homeassistant/packages/tokentracker/`.
-- VS Code-extensionen i `vscode-extension/`, som publicerar lokala Codex- och
-  Claude Code-veckoräknare till MQTT discovery.
+- The VS Code extension in `vscode-extension/`, which publishes local Codex
+  and Claude Code weekly counters to MQTT discovery.
 
-## 1. Klona repot
+## 1. Clone the repo
 
-På din dator:
+On your machine:
 
 ```powershell
 git clone <repo-url> Tokentracker
 cd Tokentracker
 ```
 
-## 2. Förbered Home Assistant
+## 2. Prepare Home Assistant
 
 ### MQTT
 
-Installera och starta en MQTT-broker om du inte redan har en. I Home Assistant är
-det enklast med:
+Install and start an MQTT broker if you do not already have one. In Home
+Assistant the easiest option is:
 
 ```text
 Settings -> Add-ons -> Mosquitto broker
 ```
 
-Skapa en MQTT-användare som VS Code-extensionen får använda, till exempel:
+Create an MQTT user that the VS Code extension can use, for example:
 
 ```text
 username: tokentracker
-password: <ett eget lösenord>
+password: <your own password>
 ```
 
-Se till att Home Assistant har MQTT-integrationen aktiv:
+Make sure Home Assistant has the MQTT integration active:
 
 ```text
 Settings -> Devices & services -> MQTT
@@ -53,34 +53,34 @@ Settings -> Devices & services -> MQTT
 
 ### Packages
 
-Kopiera repo-katalogen:
+Copy the repo directory:
 
 ```text
 homeassistant/packages/tokentracker/
 ```
 
-till Home Assistant:
+to Home Assistant:
 
 ```text
 /config/packages/tokentracker/
 ```
 
-Se till att `/config/configuration.yaml` laddar packages:
+Make sure `/config/configuration.yaml` loads packages:
 
 ```yaml
 homeassistant:
   packages: !include_dir_named packages
 ```
 
-Starta om Home Assistant efter ändringen.
+Restart Home Assistant after the change.
 
-## 3. Lägg in Home Assistant secrets
+## 3. Add Home Assistant secrets
 
-Öppna `/config/secrets.yaml` i Home Assistant.
+Open `/config/secrets.yaml` in Home Assistant.
 
 ### OpenRouter
 
-Om du vill använda OpenRouter-sidorna, lägg till:
+If you want to use the OpenRouter pages, add:
 
 ```yaml
 openrouter_management_bearer: "Bearer sk-or-v1-..."
@@ -91,38 +91,39 @@ openrouter_api_bearer4: "Bearer sk-or-v1-..."
 openrouter_api_bearer5: "Bearer sk-or-v1-..."
 ```
 
-Home Assistant kräver att alla fem `openrouter_api_bearer*` finns. Om du bara
-har en nyckel kan alla fem peka på samma bearer; templates räknar unika key
-labels och dubbelräknar inte samma nyckel.
+Home Assistant requires all five `openrouter_api_bearer*` to exist. If you
+only have one key, all five can point at the same bearer; the templates count
+unique key labels and do not double-count the same key.
 
-Om du inte vill använda OpenRouter alls behöver du antingen ta bort/inte kopiera
-`openrouter.yaml`, eller lägga in dummy-secrets och acceptera att sensorerna blir
-noll/unavailable.
+If you do not want to use OpenRouter at all, either skip / remove
+`openrouter.yaml`, or add dummy secrets and accept that the sensors will be
+zero / unavailable.
 
 ### Open WebUI
 
-Om du vill använda Open WebUI-sidorna, lägg till:
+If you want to use the Open WebUI pages, add:
 
 ```yaml
 openwebui_bearer: "Bearer eyJhbGciOi..."
-openwebui_users_url: "http://din-openwebui:8080/api/v1/users/"
-openwebui_chats_url: "http://din-openwebui:8080/api/v1/chats/all/db"
-openwebui_analytics_url: "http://din-openwebui:8080/api/v1/analytics/users"
+openwebui_users_url: "http://your-openwebui:8080/api/v1/users/"
+openwebui_chats_url: "http://your-openwebui:8080/api/v1/chats/all/db"
+openwebui_analytics_url: "http://your-openwebui:8080/api/v1/analytics/users"
 openwebui_tokens_today_url: >-
-  http://din-openwebui:8080/api/v1/analytics/tokens?start_date={{ now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() | int }}&end_date={{ now().timestamp() | int }}
+  http://your-openwebui:8080/api/v1/analytics/tokens?start_date={{ now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() | int }}&end_date={{ now().timestamp() | int }}
 ```
 
-Om du inte vill använda Open WebUI behöver du antingen ta bort/inte kopiera
-`openwebui.yaml`, eller lägga in dummy-secrets/URL:er och acceptera att
-sensorerna blir noll/unavailable.
+If you do not want to use Open WebUI, either skip / remove `openwebui.yaml`,
+or add dummy secrets / URLs and accept that the sensors will be zero /
+unavailable.
 
-Starta om Home Assistant efter att secrets och packages är på plats.
+Restart Home Assistant after secrets and packages are in place.
 
-## 4. Bygg och installera VS Code-extensionen
+## 4. Build and install the VS Code extension
 
-Extensionen måste installeras i den VS Code där Codex/Claude Code körs.
+The extension must be installed in the VS Code instance where Codex / Claude
+Code runs.
 
-Gå till extension-katalogen:
+Go to the extension directory:
 
 ```powershell
 cd vscode-extension
@@ -131,19 +132,19 @@ npm run compile
 npm run package
 ```
 
-Det skapar en VSIX, till exempel:
+That produces a VSIX, for example:
 
 ```text
 tokentracker-vscode-1.2.2.vsix
 ```
 
-Installera den i VS Code:
+Install it in VS Code:
 
 ```text
 Extensions -> ... -> Install from VSIX...
 ```
 
-Lägg sedan in inställningar i VS Code `settings.json`:
+Then add settings in VS Code `settings.json`:
 
 ```json
 {
@@ -156,14 +157,15 @@ Lägg sedan in inställningar i VS Code `settings.json`:
 }
 ```
 
-Kör gärna:
+Optionally run:
 
 ```text
 Developer: Reload Window
 TokenTracker: Publish Now
 ```
 
-Efter någon minut bör Home Assistant få MQTT discovery-sensorer som:
+After a minute or so Home Assistant should receive MQTT discovery sensors
+such as:
 
 ```text
 sensor.tokentracker_vs_code_codex_tokens_week
@@ -171,39 +173,40 @@ sensor.tokentracker_vs_code_claude_code_tokens_week
 sensor.tokentracker_vs_code_updated_at_epoch
 ```
 
-Extensionen läser lokala filer:
+The extension reads local files:
 
-- Codex: `~/.codex/sessions/**/*.jsonl`, fallback `~/.codex/state_5.sqlite`.
+- Codex: `~/.codex/sessions/**/*.jsonl`, falling back to `~/.codex/state_5.sqlite`.
 - Claude Code: `~/.claude/projects/**/*.jsonl`.
 
-Den skickar veckoräknare. ESP:n räknar själv fram aktuell 5h-period med egna
-baselines.
+It publishes weekly counters. The ESP computes the current 5h period itself
+using its own baselines.
 
-## 5. Förbered ESPHome secrets
+## 5. Prepare ESPHome secrets
 
-ESPHome-filen inkluderar:
+The ESPHome file includes:
 
 ```yaml
 <<: !include base/base-iot.yaml
 ```
 
-`esphome/base/base-iot.yaml` kräver dessa secrets i ESPHome:
+`esphome/base/base-iot.yaml` requires these secrets in ESPHome:
 
 ```yaml
-iot_wifi_ssid: "ditt-iot-wifi"
-iot_wifi_password: "wifi-lösenord"
+iot_wifi_ssid: "your-iot-wifi"
+iot_wifi_password: "wifi-password"
 iot_wifi_domain: ".local"
-wifi_ap_password: "fallback-ap-lösenord"
-api_key: "base64-api-key-från-esphome"
-ota_password: "ota-lösenord"
+wifi_ap_password: "fallback-ap-password"
+api_key: "base64-api-key-from-esphome"
+ota_password: "ota-password"
 ```
 
-I ESPHome Dashboard kan du skapa en ny device bara för att få en API encryption
-key, eller generera en själv enligt ESPHome-dokumentationen.
+In the ESPHome Dashboard you can create a new device just to get an API
+encryption key, or generate one yourself according to the ESPHome
+documentation.
 
-## 6. Lägg in ESPHome-konfigurationen
+## 6. Add the ESPHome configuration
 
-Kopiera dessa delar till din ESPHome-konfigurationskatalog:
+Copy these parts to your ESPHome configuration directory:
 
 ```text
 esphome/round-token-tracker.yaml
@@ -211,7 +214,7 @@ esphome/base/base-iot.yaml
 esphome/images/
 ```
 
-Öppna `round-token-tracker.yaml` och kontrollera substitutions i början:
+Open `round-token-tracker.yaml` and check the substitutions at the top:
 
 ```yaml
 openai_week_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_week
@@ -223,29 +226,30 @@ claude_max_ktokens: "250000"
 openwebui_max_ktokens: "1250"
 ```
 
-Ändra entity-id:n om dina HA-entiteter heter något annat.
+Change the entity IDs if your HA entities are named differently.
 
-## 7. Flasha displayen
+## 7. Flash the display
 
-I ESPHome Dashboard:
+In the ESPHome Dashboard:
 
-1. Lägg till eller öppna device `round-token-tracker`.
-2. Välj `Install`.
-3. Första gången: använd USB till displayen.
-4. Efter första flashen kan OTA användas om Wi-Fi/API fungerar.
+1. Add or open the device `round-token-tracker`.
+2. Select `Install`.
+3. The first time: use USB to the display.
+4. After the first flash, OTA can be used if Wi-Fi / API works.
 
-Konfigurationen använder external component för touch-drivern:
+The configuration uses an external component for the touch driver:
 
 ```text
 https://github.com/shelson/esphome-cst9217
 ```
 
-ESPHome behöver därför internet vid build om komponenten inte redan är cachad.
+ESPHome therefore needs internet access at build time unless the component
+is already cached.
 
-## 8. Konfigurera displayen i Home Assistant
+## 8. Configure the display in Home Assistant
 
-När ESP:n är ansluten dyker Token Tracker upp som en ESPHome-enhet i Home
-Assistant. Ställ in de viktigaste config-entiteterna:
+When the ESP connects, Token Tracker appears as an ESPHome device in Home
+Assistant. Configure the most important config entities:
 
 - `Max Codex / 5h`
 - `Max Claude / 5h`
@@ -261,17 +265,17 @@ Assistant. Ställ in de viktigaste config-entiteterna:
 - `Show Clock`, `Show Codex`, `Show Claude Code`, `Show OpenRouter`,
   `Show Open WebUI`, `Show Overview`
 
-Codex/Claude max-värden är i ktokens per 5h-period.
+Codex/Claude max values are in ktokens per 5h period.
 
-`Codex/Claude 5h Start Hour` är `0-24`. `0` betyder `00:00`, och `24` behandlas
-som `00:00`. Minute är `0-59`.
+`Codex/Claude 5h Start Hour` is `0-24`. `0` means `00:00`, and `24` is treated
+as `00:00`. Minute is `0-59`.
 
-När du ändrar en 5h-starttid sparar ESP:n aktuell veckoräknare som baseline.
-Efter det fortsätter den räkna perioder var femte timme.
+When you change a 5h start time, the ESP saves the current weekly counter as
+its baseline. After that it keeps counting periods every five hours.
 
-## 9. Kontrollera att allt fungerar
+## 9. Check that everything works
 
-I Home Assistant bör du se:
+In Home Assistant you should see:
 
 ```text
 sensor.tokentracker_vs_code_codex_tokens_week
@@ -287,7 +291,7 @@ sensor.tokentracker_vs_code_claude_code_output_tokens_week
 sensor.tokentracker_vs_code_updated_at_epoch
 ```
 
-För OpenRouter:
+For OpenRouter:
 
 ```text
 sensor.openrouter_balance_remaining
@@ -298,7 +302,7 @@ sensor.openrouter_activity_prompt_tokens
 sensor.openrouter_activity_completion_tokens
 ```
 
-För Open WebUI:
+For Open WebUI:
 
 ```text
 sensor.openwebui_tokens_today
@@ -310,60 +314,61 @@ sensor.openwebui_models_today
 sensor.openwebui_output_token_percent_today
 ```
 
-På displayen:
+On the display:
 
-- Swipe vänster/höger byter sida.
-- Tryck på en individuell provider-skärm hoppar tillbaka till quadrant-sidan.
-- Kort tryck på toppknappen pausar/återupptar auto-rotate.
-- Långt tryck på toppknappen släcker/tänder displayen.
-- På quadrant-sidan kan du trycka på en kvadrant för att hoppa till respektive
-  detaljsida.
+- Swipe left/right to change page.
+- Tapping an individual provider screen jumps back to the quadrant page.
+- A short press on the top button pauses/resumes auto-rotate.
+- A long press on the top button turns the display off/on.
+- On the quadrant page you can tap a quadrant to jump to the matching detail
+  page.
 
-## 10. Felsökning
+## 10. Troubleshooting
 
-### VS Code-sensorer saknas
+### VS Code sensors are missing
 
-- Kontrollera att VSIX är installerad och att VS Code är reloadad.
-- Kontrollera MQTT-inställningarna i VS Code.
-- Kör `TokenTracker: Publish Now`.
-- Kontrollera att MQTT integrationen i HA är aktiv.
-- Kom ihåg att extensionen bara kör när VS Code körs.
+- Check that the VSIX is installed and that VS Code has been reloaded.
+- Check the MQTT settings in VS Code.
+- Run `TokenTracker: Publish Now`.
+- Check that the MQTT integration in HA is active.
+- Remember that the extension only runs while VS Code is running.
 
-### ESP visar `VS Code stale`
+### The ESP shows `VS Code stale`
 
-- VS Code-extensionen publicerar inte längre eller VS Code är stängt.
-- Kontrollera `sensor.tokentracker_vs_code_updated_at_epoch`.
-- Kör `TokenTracker: Publish Now`.
+- The VS Code extension is no longer publishing, or VS Code is closed.
+- Check `sensor.tokentracker_vs_code_updated_at_epoch`.
+- Run `TokenTracker: Publish Now`.
 
-### ESPHome build misslyckas
+### ESPHome build fails
 
-- Kontrollera ESPHome secrets.
-- Kontrollera att `images/` finns bredvid YAML-filen.
-- Kontrollera att ESPHome kan hämta external component från GitHub.
-- Första flashen kan behöva göras via USB.
+- Check ESPHome secrets.
+- Check that `images/` is next to the YAML file.
+- Check that ESPHome can fetch the external component from GitHub.
+- The first flash may need to be done via USB.
 
-### OpenRouter/Open WebUI visar noll
+### OpenRouter / Open WebUI shows zero
 
-- Kontrollera `secrets.yaml`.
-- Kontrollera att HA kan nå endpoints.
-- Starta om Home Assistant efter package/secrets-ändringar.
-- Titta i Home Assistant logs efter REST-sensorfel.
+- Check `secrets.yaml`.
+- Check that HA can reach the endpoints.
+- Restart Home Assistant after package / secrets changes.
+- Look in the Home Assistant logs for REST sensor errors.
 
-### Gamla entiteter ligger kvar
+### Old entities are still around
 
-VS Code-extensionen tombstonar äldre MQTT discovery-entiteter, men HA kan ibland
-behålla disabled/unavailable entities. Ta bort dem manuellt här:
+The VS Code extension tombstones old MQTT discovery entities, but HA can
+sometimes keep disabled/unavailable entities. Remove them manually here:
 
 ```text
 Settings -> Devices & services -> Entities
 ```
 
-## Uppdatering senare
+## Updating later
 
-När repot ändras:
+When the repo changes:
 
-1. Pull:a senaste kod.
-2. Bygg ny VSIX om `vscode-extension/` ändrats.
-3. Installera ny VSIX och reload:a VS Code.
-4. Uppdatera ESPHome om `esphome/round-token-tracker.yaml` ändrats.
-5. Kopiera om Home Assistant package-filer om `homeassistant/packages/` ändrats.
+1. Pull the latest code.
+2. Build a new VSIX if `vscode-extension/` changed.
+3. Install the new VSIX and reload VS Code.
+4. Update ESPHome if `esphome/round-token-tracker.yaml` changed.
+5. Copy the Home Assistant package files again if `homeassistant/packages/`
+   changed.

@@ -1,18 +1,18 @@
 # Cleanup Old TokenTracker Entities
 
-Nuvarande lösning använder:
+The current setup uses:
 
-- MQTT discovery från VS Code-extensionen för Codex och Claude Code.
-- REST/template packages för OpenRouter och Open WebUI.
-- ESPHome config-entities för maxvärden och displayinställningar.
+- MQTT discovery from the VS Code extension for Codex and Claude Code.
+- REST/template packages for OpenRouter and Open WebUI.
+- ESPHome config entities for max values and display settings.
 
-Gamla `command_line`- och helper-baserade entiteter behövs inte längre.
+Old `command_line`- and helper-based entities are no longer needed.
 
-## Ta bort gamla package-filer
+## Remove old package files
 
-Om du fortfarande har äldre package-filer i Home Assistant, ta bort dem innan du
-startar om HA. Leta särskilt efter gamla `command_line`-lösningar som skapade
-entiteter för:
+If you still have older package files in Home Assistant, remove them before
+restarting HA. Look in particular for old `command_line` solutions that
+created entities such as:
 
 ```text
 openai_tokens
@@ -25,24 +25,24 @@ openrouter_usage
 ai_token_tracker
 ```
 
-Behåll däremot:
+Keep, on the other hand:
 
 ```text
 /config/packages/tokentracker/openrouter.yaml
 /config/packages/tokentracker/openwebui.yaml
 ```
 
-## Ta bort gamla MQTT discovery-sensorer
+## Remove old MQTT discovery sensors
 
-VS Code-extension `1.1.0` skickar tombstones för gamla MQTT discovery-sensorer,
-så Home Assistant bör själv rensa bort legacy-sensorerna efter att extensionen
-startat om och anslutit till MQTT.
+VS Code extension `1.1.0` publishes tombstones for old MQTT discovery sensors,
+so Home Assistant should clean up the legacy sensors itself after the
+extension restarts and reconnects to MQTT.
 
-Om någon gammal entity ändå ligger kvar:
+If any old entity is still left:
 
 ```text
 Settings -> Devices & services -> Entities
 ```
 
-Sök på `tokentracker` och ta bort disabled/unavailable entiteter som inte längre
-har en aktiv integration bakom sig.
+Search for `tokentracker` and remove disabled/unavailable entities that no
+longer have an active integration behind them.

@@ -2,49 +2,49 @@
 
 Package version: `1.2.1`
 
-Det här paketet innehåller Home Assistant REST/template-sensorer för de delar som
-inte kommer från VS Code-extensionen:
+This package contains Home Assistant REST/template sensors for the parts that
+do not come from the VS Code extension:
 
-- OpenRouter credits, account balance, multi-key usage och
-  activity-tokenhistorik.
-- Open WebUI usage/statistik inklusive input/output tokens, modellräkning och
-  dagens I/O-procent.
+- OpenRouter credits, account balance, multi-key usage and activity token
+  history.
+- Open WebUI usage/statistics including input/output tokens, model count and
+  today's I/O percent.
 
-Codex och Claude Code kommer från VS Code-extensionen via MQTT discovery:
+Codex and Claude Code come from the VS Code extension via MQTT discovery:
 
 - `sensor.tokentracker_vs_code_codex_tokens_week`
 - `sensor.tokentracker_vs_code_claude_code_tokens_week`
 - `sensor.tokentracker_vs_code_updated_at_epoch`
 
-ESPHome-displayen använder sedan dessa råvärden och sina egna config-entities
-för 5h-perioder, maxvärden, tokens kvar och procent.
+The ESPHome display then uses these raw values together with its own config
+entities for 5h periods, max values, tokens remaining and percent.
 
 ## Installation
 
-Kopiera katalogen till:
+Copy the directory to:
 
 ```text
 /config/packages/tokentracker/
 ```
 
-Se till att `configuration.yaml` laddar packages:
+Make sure `configuration.yaml` loads packages:
 
 ```yaml
 homeassistant:
   packages: !include_dir_named packages
 ```
 
-Starta om Home Assistant efter ändringar i package-filerna.
+Restart Home Assistant after changes to the package files.
 
 ## OpenRouter
 
-`openrouter.yaml` använder tre endpoints:
+`openrouter.yaml` uses three endpoints:
 
 - `GET https://openrouter.ai/api/v1/credits`
 - `GET https://openrouter.ai/api/v1/key`
 - `GET https://openrouter.ai/api/v1/activity`
 
-Lägg till i `/config/secrets.yaml`:
+Add to `/config/secrets.yaml`:
 
 ```yaml
 openrouter_management_bearer: "Bearer sk-or-v1-..."
@@ -55,13 +55,13 @@ openrouter_api_bearer4: "Bearer sk-or-v1-..."
 openrouter_api_bearer5: "Bearer sk-or-v1-..."
 ```
 
-`openrouter_api_bearer1` till `openrouter_api_bearer5` läses var för sig och
-slås ihop till de gamla display-entiteterna. Home Assistant kräver att alla
-refererade secrets finns. Oanvända slots kan därför peka på samma bearer som
-slot 1; templates räknar bara unika key-labels och dubbelräknar inte samma
-nyckel.
+`openrouter_api_bearer1` through `openrouter_api_bearer5` are read separately
+and merged into the legacy display entities. Home Assistant requires every
+referenced secret to exist. Unused slots can therefore point at the same
+bearer as slot 1; the templates only count unique key labels and do not
+double-count the same key.
 
-Exponerade sensorer:
+Exposed sensors:
 
 - `sensor.openrouter_balance_remaining`
 - `sensor.openrouter_total_credits`
@@ -90,7 +90,7 @@ Exponerade sensorer:
 - `sensor.openrouter_activity_cost`
 - `sensor.openrouter_activity_latest_date`
 
-Displayens OpenRouter-detaljsida använder normalt:
+The display's OpenRouter detail page normally uses:
 
 - `sensor.openrouter_balance_remaining`
 - `sensor.openrouter_key_count`
@@ -99,21 +99,21 @@ Displayens OpenRouter-detaljsida använder normalt:
 - `sensor.openrouter_activity_prompt_tokens`
 - `sensor.openrouter_activity_completion_tokens`
 
-Quadrant/overview-ringarna använder normalt:
+The quadrant/overview rings normally use:
 
 - `sensor.openrouter_balance_remaining`
 - `sensor.openrouter_usage_percent`
 
-OpenRouter `/activity` är historisk tokenstatistik för avslutade UTC-dagar, inte
-en live "idag"-räknare. Prompt/completion-värdena används därför som historik på
-detaljsidan och I/O Mix, medan account balance/key limit/cost används för live
-displayvärden.
+OpenRouter `/activity` is historical token statistics for completed UTC days,
+not a live "today" counter. The prompt/completion values are therefore used as
+history on the detail page and I/O Mix, while account balance / key limit /
+cost are used for live display values.
 
 ## Open WebUI
 
-`openwebui.yaml` kräver en bearer från ett Open WebUI-admin-konto.
+`openwebui.yaml` requires a bearer from an Open WebUI admin account.
 
-Lägg till i `/config/secrets.yaml`:
+Add to `/config/secrets.yaml`:
 
 ```yaml
 openwebui_bearer: "Bearer eyJhbGciOi..."
@@ -124,14 +124,14 @@ openwebui_tokens_today_url: >-
   http://llm.example.net:8080/api/v1/analytics/tokens?start_date={{ now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() | int }}&end_date={{ now().timestamp() | int }}
 ```
 
-Endpoints som används:
+Endpoints used:
 
 - `GET /api/v1/users/`
 - `GET /api/v1/chats/all/db`
 - `GET /api/v1/analytics/users`
 - `GET /api/v1/analytics/tokens`
 
-Exponerade sensorer:
+Exposed sensors:
 
 - `sensor.openwebui_total_users`
 - `sensor.openwebui_active_users`
@@ -148,7 +148,7 @@ Exponerade sensorer:
 - `sensor.openwebui_input_token_percent_today`
 - `sensor.openwebui_output_token_percent_today`
 
-Displayen använder normalt:
+The display normally uses:
 
 - `sensor.openwebui_tokens_today`
 - `sensor.openwebui_input_tokens_today`
@@ -158,19 +158,19 @@ Displayen använder normalt:
 - `sensor.openwebui_models_today`
 - `sensor.openwebui_output_token_percent_today`
 
-`/chats/all/db` kan vara tung på stora installationer och pollas därför var 5:e
-minut. Open WebUI har ingen ren "currently connected users"-endpoint, så
-`active_users` räknas från `last_active_at` de senaste 5 minuterna.
+`/chats/all/db` can be heavy on large installations and is therefore polled
+every 5 minutes. Open WebUI has no clean "currently connected users" endpoint,
+so `active_users` is counted from `last_active_at` over the last 5 minutes.
 
-## Gamla entiteter
+## Old entities
 
-Det gamla command_line-baserade paketet är borttaget. VS Code-data går via MQTT
-discovery, och max/left/procent räknas på ESPHome-enheten.
+The old command_line-based package has been removed. VS Code data goes via
+MQTT discovery, and max/left/percent are computed on the ESPHome device.
 
-Om Home Assistant fortfarande visar gamla entiteter från tidigare iterationer:
+If Home Assistant still shows old entities from earlier iterations:
 
-1. Kontrollera att nya package-filer är installerade.
-2. Starta om Home Assistant.
-3. Gå till `Settings -> Devices & services -> Entities`.
-4. Ta bort gamla disabled/unavailable TokenTracker-entiteter manuellt om de inte
-   längre har en aktiv integration bakom sig.
+1. Check that the new package files are installed.
+2. Restart Home Assistant.
+3. Go to `Settings -> Devices & services -> Entities`.
+4. Manually remove old disabled/unavailable TokenTracker entities if they no
+   longer have an active integration behind them.
