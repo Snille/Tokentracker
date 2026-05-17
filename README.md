@@ -1,5 +1,7 @@
 # Token Tracker
 
+![Token Tracker](.github/screenshot-2026-05-17.png)
+
 Project version: `0.3.0`
 
 Token Tracker is a personal AI-usage display for the Waveshare ESP32-S3 Touch
