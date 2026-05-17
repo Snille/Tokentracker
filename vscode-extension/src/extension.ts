@@ -31,23 +31,24 @@ interface SensorConfig {
 
 interface UsagePayload {
   updated_at: string;
+  updated_at_epoch: number;
   [key: string]: string | number | boolean;
 }
 
 interface CodexUsage {
-  codex_tokens_today: number;
-  codex_input_tokens_today: number;
-  codex_cached_input_tokens_today: number;
-  codex_output_tokens_today: number;
-  codex_reasoning_output_tokens_today: number;
+  codex_tokens_week: number;
+  codex_input_tokens_week: number;
+  codex_cached_input_tokens_week: number;
+  codex_output_tokens_week: number;
+  codex_reasoning_output_tokens_week: number;
 }
 
 interface ClaudeUsage {
-  claude_tokens_today: number;
-  claude_input_tokens_today: number;
-  claude_cache_creation_input_tokens_today: number;
-  claude_cache_read_input_tokens_today: number;
-  claude_output_tokens_today: number;
+  claude_tokens_week: number;
+  claude_input_tokens_week: number;
+  claude_cache_creation_input_tokens_week: number;
+  claude_cache_read_input_tokens_week: number;
+  claude_output_tokens_week: number;
 }
 
 interface CodexTokenUsage {
@@ -56,6 +57,25 @@ interface CodexTokenUsage {
   output_tokens?: number;
   reasoning_output_tokens?: number;
   total_tokens?: number;
+}
+
+interface UsageWindows {
+  weekStartMs: number;
+}
+
+interface CodexUsageBuckets {
+  week: CodexTokenUsage;
+}
+
+interface ClaudeUsageBucket {
+  inputTokens: number;
+  cacheCreationInputTokens: number;
+  cacheReadInputTokens: number;
+  outputTokens: number;
+}
+
+interface ClaudeUsageBuckets {
+  week: ClaudeUsageBucket;
 }
 
 const legacySensorIds = [
@@ -76,6 +96,26 @@ const legacySensorIds = [
   "collector_status",
   "collector_version",
   "collector_updated_at",
+  "codex_tokens_today",
+  "codex_input_tokens_today",
+  "codex_cached_input_tokens_today",
+  "codex_output_tokens_today",
+  "codex_reasoning_output_tokens_today",
+  "claude_tokens_today",
+  "claude_input_tokens_today",
+  "claude_cache_creation_input_tokens_today",
+  "claude_cache_read_input_tokens_today",
+  "claude_output_tokens_today",
+  "codex_tokens_5h",
+  "codex_input_tokens_5h",
+  "codex_cached_input_tokens_5h",
+  "codex_output_tokens_5h",
+  "codex_reasoning_output_tokens_5h",
+  "claude_tokens_5h",
+  "claude_input_tokens_5h",
+  "claude_cache_creation_input_tokens_5h",
+  "claude_cache_read_input_tokens_5h",
+  "claude_output_tokens_5h",
 ];
 
 let client: MqttClient | undefined;
@@ -148,7 +188,11 @@ async function publishCycle() {
   }
 
   const settings = getSettings();
-  const payload: UsagePayload = { updated_at: new Date().toISOString() };
+  const now = new Date();
+  const payload: UsagePayload = {
+    updated_at: now.toISOString(),
+    updated_at_epoch: Math.floor(now.getTime() / 1000),
+  };
 
   if (settings.codexEnabled) {
     try {
@@ -157,11 +201,11 @@ async function publishCycle() {
     } catch (error) {
       console.error("TokenTracker Codex read failed", error);
       Object.assign(payload, {
-        codex_tokens_today: 0,
-        codex_input_tokens_today: 0,
-        codex_cached_input_tokens_today: 0,
-        codex_output_tokens_today: 0,
-        codex_reasoning_output_tokens_today: 0,
+        codex_tokens_week: 0,
+        codex_input_tokens_week: 0,
+        codex_cached_input_tokens_week: 0,
+        codex_output_tokens_week: 0,
+        codex_reasoning_output_tokens_week: 0,
       });
     }
   }
@@ -172,11 +216,11 @@ async function publishCycle() {
     } catch (error) {
       console.error("TokenTracker Claude read failed", error);
       Object.assign(payload, {
-        claude_tokens_today: 0,
-        claude_input_tokens_today: 0,
-        claude_cache_creation_input_tokens_today: 0,
-        claude_cache_read_input_tokens_today: 0,
-        claude_output_tokens_today: 0,
+        claude_tokens_week: 0,
+        claude_input_tokens_week: 0,
+        claude_cache_creation_input_tokens_week: 0,
+        claude_cache_read_input_tokens_week: 0,
+        claude_output_tokens_week: 0,
       });
     }
   }
@@ -188,16 +232,17 @@ async function publishCycle() {
 
 async function publishDiscovery(settings: MqttSettings) {
   const sensors: SensorConfig[] = [
-    { id: "codex_tokens_today", name: "Codex Tokens Today", unit: "tokens", icon: "mdi:counter" },
-    { id: "codex_input_tokens_today", name: "Codex Input Tokens Today", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
-    { id: "codex_cached_input_tokens_today", name: "Codex Cached Input Tokens Today", unit: "tokens", icon: "mdi:cached" },
-    { id: "codex_output_tokens_today", name: "Codex Output Tokens Today", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
-    { id: "codex_reasoning_output_tokens_today", name: "Codex Reasoning Output Tokens Today", unit: "tokens", icon: "mdi:head-cog-outline" },
-    { id: "claude_tokens_today", name: "Claude Code Tokens Today", unit: "tokens", icon: "mdi:counter" },
-    { id: "claude_input_tokens_today", name: "Claude Code Input Tokens Today", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
-    { id: "claude_cache_creation_input_tokens_today", name: "Claude Code Cache Creation Tokens Today", unit: "tokens", icon: "mdi:database-plus-outline" },
-    { id: "claude_cache_read_input_tokens_today", name: "Claude Code Cache Read Tokens Today", unit: "tokens", icon: "mdi:database-eye-outline" },
-    { id: "claude_output_tokens_today", name: "Claude Code Output Tokens Today", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
+    { id: "updated_at_epoch", name: "Updated At Epoch", unit: "s", icon: "mdi:clock-check-outline" },
+    { id: "codex_tokens_week", name: "Codex Tokens Week", unit: "tokens", icon: "mdi:calendar-week" },
+    { id: "codex_input_tokens_week", name: "Codex Input Tokens Week", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
+    { id: "codex_cached_input_tokens_week", name: "Codex Cached Input Tokens Week", unit: "tokens", icon: "mdi:cached" },
+    { id: "codex_output_tokens_week", name: "Codex Output Tokens Week", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
+    { id: "codex_reasoning_output_tokens_week", name: "Codex Reasoning Output Tokens Week", unit: "tokens", icon: "mdi:head-cog-outline" },
+    { id: "claude_tokens_week", name: "Claude Code Tokens Week", unit: "tokens", icon: "mdi:calendar-week" },
+    { id: "claude_input_tokens_week", name: "Claude Code Input Tokens Week", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
+    { id: "claude_cache_creation_input_tokens_week", name: "Claude Code Cache Creation Tokens Week", unit: "tokens", icon: "mdi:database-plus-outline" },
+    { id: "claude_cache_read_input_tokens_week", name: "Claude Code Cache Read Tokens Week", unit: "tokens", icon: "mdi:database-eye-outline" },
+    { id: "claude_output_tokens_week", name: "Claude Code Output Tokens Week", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
   ];
 
   for (const sensorId of legacySensorIds) {
@@ -228,78 +273,67 @@ async function publishDiscovery(settings: MqttSettings) {
 }
 
 async function readCodexUsage(): Promise<CodexUsage> {
-  const sessionUsage = await readCodexSessionUsage();
-  if (sessionUsage.codex_tokens_today > 0) {
+  const windows = currentUsageWindows();
+  const sessionUsage = await readCodexSessionUsage(windows);
+  if (sessionUsage.codex_tokens_week > 0) {
     return sessionUsage;
   }
 
   const dbPath = path.join(os.homedir(), ".codex", "state_5.sqlite");
   if (!fs.existsSync(dbPath)) {
-    return {
-      codex_tokens_today: 0,
-      codex_input_tokens_today: 0,
-      codex_cached_input_tokens_today: 0,
-      codex_output_tokens_today: 0,
-      codex_reasoning_output_tokens_today: 0,
-    };
+    return emptyCodexUsage();
   }
 
-  const startOfDay = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
   const rows = await sqliteAll<{
     tokens_used: number;
   }>(
     dbPath,
     "select tokens_used from threads where updated_at >= ?",
-    [startOfDay],
+    [Math.floor(windows.weekStartMs / 1000)],
   );
 
-  const tokensToday = rows.reduce((sum, row) => sum + (row.tokens_used || 0), 0);
+  const tokensWeek = rows.reduce((sum, row) => sum + (row.tokens_used || 0), 0);
 
   return {
-    codex_tokens_today: tokensToday,
-    codex_input_tokens_today: 0,
-    codex_cached_input_tokens_today: 0,
-    codex_output_tokens_today: 0,
-    codex_reasoning_output_tokens_today: 0,
+    ...emptyCodexUsage(),
+    codex_tokens_week: tokensWeek,
   };
 }
 
-async function readCodexSessionUsage(): Promise<CodexUsage> {
+async function readCodexSessionUsage(windows: UsageWindows): Promise<CodexUsage> {
   const sessionsPath = path.join(os.homedir(), ".codex", "sessions");
-  const startOfDayMs = new Date().setHours(0, 0, 0, 0);
-  const usage: CodexUsage = {
-    codex_tokens_today: 0,
-    codex_input_tokens_today: 0,
-    codex_cached_input_tokens_today: 0,
-    codex_output_tokens_today: 0,
-    codex_reasoning_output_tokens_today: 0,
+  const buckets: CodexUsageBuckets = {
+    week: {},
   };
 
   if (!fs.existsSync(sessionsPath)) {
-    return usage;
+    return emptyCodexUsage();
   }
 
   for (const filePath of walkFiles(sessionsPath, ".jsonl")) {
     if (!path.basename(filePath).startsWith("rollout-")) continue;
 
     const stat = fs.statSync(filePath);
-    if (stat.mtimeMs < startOfDayMs) continue;
+    if (stat.mtimeMs < windows.weekStartMs) continue;
 
-    const latestUsage = await readLatestCodexTokenUsage(filePath);
-    if (!latestUsage) continue;
-
-    usage.codex_input_tokens_today += numeric(latestUsage.input_tokens);
-    usage.codex_cached_input_tokens_today += numeric(latestUsage.cached_input_tokens);
-    usage.codex_output_tokens_today += numeric(latestUsage.output_tokens);
-    usage.codex_reasoning_output_tokens_today += numeric(latestUsage.reasoning_output_tokens);
-    usage.codex_tokens_today += numeric(latestUsage.total_tokens);
+    const fileBuckets = await readCodexTokenUsageBuckets(filePath, windows, stat.mtimeMs);
+    addCodexUsage(buckets.week, fileBuckets.week);
   }
 
-  return usage;
+  return {
+    codex_tokens_week: numeric(buckets.week.total_tokens),
+    codex_input_tokens_week: numeric(buckets.week.input_tokens),
+    codex_cached_input_tokens_week: numeric(buckets.week.cached_input_tokens),
+    codex_output_tokens_week: numeric(buckets.week.output_tokens),
+    codex_reasoning_output_tokens_week: numeric(buckets.week.reasoning_output_tokens),
+  };
 }
 
-async function readLatestCodexTokenUsage(filePath: string): Promise<CodexTokenUsage | undefined> {
-  let latestUsage: CodexTokenUsage | undefined;
+async function readCodexTokenUsageBuckets(filePath: string, windows: UsageWindows, fallbackTimestampMs: number): Promise<CodexUsageBuckets> {
+  const buckets: CodexUsageBuckets = {
+    week: {},
+  };
+  let previousUsage: CodexTokenUsage | undefined;
   const reader = readline.createInterface({
     input: fs.createReadStream(filePath, { encoding: "utf8" }),
     crlfDelay: Infinity,
@@ -309,49 +343,51 @@ async function readLatestCodexTokenUsage(filePath: string): Promise<CodexTokenUs
     if (!line.trim()) continue;
     try {
       const event = JSON.parse(line);
-      if (event?.payload?.type === "token_count") {
-        latestUsage = event.payload.info?.total_token_usage;
-      }
+      if (event?.payload?.type !== "token_count") continue;
+      const currentUsage = event.payload.info?.total_token_usage;
+      if (!currentUsage) continue;
+      const eventTimestampMs = timestampMs(event) ?? fallbackTimestampMs;
+      const delta = codexUsageDelta(currentUsage, previousUsage);
+      previousUsage = currentUsage;
+      if (eventTimestampMs >= windows.weekStartMs) addCodexUsage(buckets.week, delta);
     } catch {
       // Ignore partial/corrupt log lines.
     }
   }
 
-  return latestUsage;
+  return buckets;
 }
 
 async function readClaudeUsage(): Promise<ClaudeUsage> {
   const projectsPath = path.join(os.homedir(), ".claude", "projects");
   if (!fs.existsSync(projectsPath)) {
-    return {
-      claude_tokens_today: 0,
-      claude_input_tokens_today: 0,
-      claude_cache_creation_input_tokens_today: 0,
-      claude_cache_read_input_tokens_today: 0,
-      claude_output_tokens_today: 0,
-    };
+    return emptyClaudeUsage();
   }
 
-  const startOfDayMs = new Date().setHours(0, 0, 0, 0);
-  let inputTokens = 0;
-  let cacheCreationInputTokens = 0;
-  let cacheReadInputTokens = 0;
-  let outputTokens = 0;
+  const windows = currentUsageWindows();
+  const buckets: ClaudeUsageBuckets = {
+    week: emptyClaudeBucket(),
+  };
 
   for (const filePath of walkFiles(projectsPath, ".jsonl")) {
     const stat = fs.statSync(filePath);
-    if (stat.mtimeMs < startOfDayMs) continue;
+    if (stat.mtimeMs < windows.weekStartMs) continue;
 
     const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
         const event = JSON.parse(line);
+        const eventTimestampMs = timestampMs(event) ?? stat.mtimeMs;
+        if (eventTimestampMs < windows.weekStartMs) continue;
         for (const usage of findUsageObjects(event)) {
-          inputTokens += numeric(usage.input_tokens);
-          outputTokens += numeric(usage.output_tokens);
-          cacheCreationInputTokens += numeric(usage.cache_creation_input_tokens);
-          cacheReadInputTokens += numeric(usage.cache_read_input_tokens);
+          const delta: ClaudeUsageBucket = {
+            inputTokens: numeric(usage.input_tokens),
+            outputTokens: numeric(usage.output_tokens),
+            cacheCreationInputTokens: numeric(usage.cache_creation_input_tokens),
+            cacheReadInputTokens: numeric(usage.cache_read_input_tokens),
+          };
+          addClaudeUsage(buckets.week, delta);
         }
       } catch {
         // Ignore partial/corrupt log lines.
@@ -360,11 +396,11 @@ async function readClaudeUsage(): Promise<ClaudeUsage> {
   }
 
   return {
-    claude_tokens_today: inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens,
-    claude_input_tokens_today: inputTokens,
-    claude_cache_creation_input_tokens_today: cacheCreationInputTokens,
-    claude_cache_read_input_tokens_today: cacheReadInputTokens,
-    claude_output_tokens_today: outputTokens,
+    claude_tokens_week: claudeTotal(buckets.week),
+    claude_input_tokens_week: buckets.week.inputTokens,
+    claude_cache_creation_input_tokens_week: buckets.week.cacheCreationInputTokens,
+    claude_cache_read_input_tokens_week: buckets.week.cacheReadInputTokens,
+    claude_output_tokens_week: buckets.week.outputTokens,
   };
 }
 
@@ -386,6 +422,115 @@ function findUsageObjects(value: unknown): Array<Record<string, unknown>> {
     }
   }
   return found;
+}
+
+function currentUsageWindows(now = new Date()): UsageWindows {
+  const weekStart = new Date(now);
+  const daysSinceMonday = (weekStart.getDay() + 6) % 7;
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - daysSinceMonday);
+  return {
+    weekStartMs: weekStart.getTime(),
+  };
+}
+
+function emptyCodexUsage(): CodexUsage {
+  return {
+    codex_tokens_week: 0,
+    codex_input_tokens_week: 0,
+    codex_cached_input_tokens_week: 0,
+    codex_output_tokens_week: 0,
+    codex_reasoning_output_tokens_week: 0,
+  };
+}
+
+function emptyClaudeUsage(): ClaudeUsage {
+  return {
+    claude_tokens_week: 0,
+    claude_input_tokens_week: 0,
+    claude_cache_creation_input_tokens_week: 0,
+    claude_cache_read_input_tokens_week: 0,
+    claude_output_tokens_week: 0,
+  };
+}
+
+function emptyClaudeBucket(): ClaudeUsageBucket {
+  return {
+    inputTokens: 0,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: 0,
+    outputTokens: 0,
+  };
+}
+
+function codexUsageDelta(current: CodexTokenUsage, previous: CodexTokenUsage | undefined): CodexTokenUsage {
+  const delta = {
+    input_tokens: nonNegativeDelta(current.input_tokens, previous?.input_tokens),
+    cached_input_tokens: nonNegativeDelta(current.cached_input_tokens, previous?.cached_input_tokens),
+    output_tokens: nonNegativeDelta(current.output_tokens, previous?.output_tokens),
+    reasoning_output_tokens: nonNegativeDelta(current.reasoning_output_tokens, previous?.reasoning_output_tokens),
+    total_tokens: nonNegativeDelta(current.total_tokens, previous?.total_tokens),
+  };
+  if (numeric(delta.total_tokens) <= 0) {
+    delta.total_tokens =
+      numeric(delta.input_tokens) +
+      numeric(delta.cached_input_tokens) +
+      numeric(delta.output_tokens) +
+      numeric(delta.reasoning_output_tokens);
+  }
+  return delta;
+}
+
+function nonNegativeDelta(current: unknown, previous: unknown): number {
+  const currentValue = numeric(current);
+  if (previous === undefined) return currentValue;
+  const previousValue = numeric(previous);
+  const delta = currentValue - previousValue;
+  return delta >= 0 ? delta : currentValue;
+}
+
+function addCodexUsage(target: CodexTokenUsage, addition: CodexTokenUsage) {
+  target.input_tokens = numeric(target.input_tokens) + numeric(addition.input_tokens);
+  target.cached_input_tokens = numeric(target.cached_input_tokens) + numeric(addition.cached_input_tokens);
+  target.output_tokens = numeric(target.output_tokens) + numeric(addition.output_tokens);
+  target.reasoning_output_tokens = numeric(target.reasoning_output_tokens) + numeric(addition.reasoning_output_tokens);
+  target.total_tokens = numeric(target.total_tokens) + numeric(addition.total_tokens);
+}
+
+function addClaudeUsage(target: ClaudeUsageBucket, addition: ClaudeUsageBucket) {
+  target.inputTokens += addition.inputTokens;
+  target.cacheCreationInputTokens += addition.cacheCreationInputTokens;
+  target.cacheReadInputTokens += addition.cacheReadInputTokens;
+  target.outputTokens += addition.outputTokens;
+}
+
+function claudeTotal(bucket: ClaudeUsageBucket): number {
+  return bucket.inputTokens + bucket.cacheCreationInputTokens + bucket.cacheReadInputTokens + bucket.outputTokens;
+}
+
+function timestampMs(value: unknown): number | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const obj = value as Record<string, unknown>;
+  for (const key of ["timestamp", "created_at", "createdAt", "time"]) {
+    const parsed = parseTimestampMs(obj[key]);
+    if (parsed !== undefined) return parsed;
+  }
+  const message = obj.message;
+  if (message && typeof message === "object") {
+    return timestampMs(message);
+  }
+  return undefined;
+}
+
+function parseTimestampMs(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value > 10_000_000_000 ? value : value * 1000;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function numeric(value: unknown): number {

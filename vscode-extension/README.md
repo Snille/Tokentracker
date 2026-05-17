@@ -1,25 +1,28 @@
 # TokenTracker VS Code Extension
 
-Version: 1.2.1
+Version: 1.2.2
 
 Publicerar lokala Codex- och Claude Code-tokenräknare till Home Assistant via
 MQTT discovery.
 
-Extensionen är medvetet "raw-only". Den publicerar dagens lokala tokenvärden:
+Extensionen är medvetet "raw-only". Den publicerar lokala tokenvärden för
+aktuell vecka:
 
-- `sensor.tokentracker_vs_code_codex_tokens_today`
-- `sensor.tokentracker_vs_code_codex_input_tokens_today`
-- `sensor.tokentracker_vs_code_codex_cached_input_tokens_today`
-- `sensor.tokentracker_vs_code_codex_output_tokens_today`
-- `sensor.tokentracker_vs_code_codex_reasoning_output_tokens_today`
-- `sensor.tokentracker_vs_code_claude_code_tokens_today`
-- `sensor.tokentracker_vs_code_claude_code_input_tokens_today`
-- `sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_today`
-- `sensor.tokentracker_vs_code_claude_code_cache_read_tokens_today`
-- `sensor.tokentracker_vs_code_claude_code_output_tokens_today`
+- `sensor.tokentracker_vs_code_codex_tokens_week`
+- `sensor.tokentracker_vs_code_codex_input_tokens_week`
+- `sensor.tokentracker_vs_code_codex_cached_input_tokens_week`
+- `sensor.tokentracker_vs_code_codex_output_tokens_week`
+- `sensor.tokentracker_vs_code_codex_reasoning_output_tokens_week`
+- `sensor.tokentracker_vs_code_claude_code_tokens_week`
+- `sensor.tokentracker_vs_code_claude_code_input_tokens_week`
+- `sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_week`
+- `sensor.tokentracker_vs_code_claude_code_cache_read_tokens_week`
+- `sensor.tokentracker_vs_code_claude_code_output_tokens_week`
+- `sensor.tokentracker_vs_code_updated_at_epoch`
 
 Maxgränser, tokens kvar och procent räknas i ESPHome/HA via Token
-Tracker-enhetens egna config-entities.
+Tracker-enhetens egna config-entities. Token Tracker-displayens konfigurerbara
+5h-perioder räknas på ESP:n från veckosensorerna och de sparade reset-baselines.
 
 ## MQTT Payload
 
@@ -34,16 +37,17 @@ Exempel:
 ```json
 {
   "updated_at": "2026-05-16T10:14:13.138Z",
-  "codex_tokens_today": 37195161,
-  "codex_input_tokens_today": 37001234,
-  "codex_cached_input_tokens_today": 36000000,
-  "codex_output_tokens_today": 193927,
-  "codex_reasoning_output_tokens_today": 42100,
-  "claude_tokens_today": 17443145,
-  "claude_input_tokens_today": 120000,
-  "claude_cache_creation_input_tokens_today": 3400000,
-  "claude_cache_read_input_tokens_today": 13200000,
-  "claude_output_tokens_today": 723145
+  "updated_at_epoch": 1778948053,
+  "codex_tokens_week": 37195161,
+  "codex_input_tokens_week": 37001234,
+  "codex_cached_input_tokens_week": 36000000,
+  "codex_output_tokens_week": 193927,
+  "codex_reasoning_output_tokens_week": 42100,
+  "claude_tokens_week": 17443145,
+  "claude_input_tokens_week": 120000,
+  "claude_cache_creation_input_tokens_week": 3400000,
+  "claude_cache_read_input_tokens_week": 13200000,
+  "claude_output_tokens_week": 723145
 }
 ```
 
@@ -73,8 +77,7 @@ Lägg in i VS Code settings:
 Codex:
 
 - Läser `~/.codex/sessions/**/*.jsonl`.
-- Summerar senaste `total_token_usage` per rollout-fil uppdaterad sedan lokal
-  midnatt.
+- Räknar deltan mellan `token_count`-händelser och summerar aktuell vecka.
 - Faller tillbaka till `~/.codex/state_5.sqlite` och `threads.tokens_used` om
   sessionsfilerna saknar token events.
 
@@ -83,7 +86,7 @@ Claude Code:
 - Läser `~/.claude/projects/**/*.jsonl`.
 - Summerar `usage.input_tokens`, `usage.output_tokens`,
   `usage.cache_creation_input_tokens` och `usage.cache_read_input_tokens` för
-  filer ändrade sedan lokal midnatt.
+  händelser från aktuell vecka.
 
 Extensionen kör bara medan VS Code körs.
 
@@ -97,6 +100,8 @@ sensorer som inte längre används, exempelvis:
 - current thread/model/project
 - totals
 - collector status/version
+- gamla Codex/Claude `*_today`-sensorer
+- tidigare rullande Codex/Claude `*_5h`-sensorer
 
 Det gör att Home Assistant kan städa bort de gamla MQTT discovery-entiteterna.
 
@@ -111,7 +116,7 @@ npm run package
 Byggd VSIX hamnar lokalt i extension-katalogen och ignoreras av Git:
 
 ```text
-tokentracker-vscode-1.2.1.vsix
+tokentracker-vscode-1.2.2.vsix
 ```
 
 Installera i VS Code via:

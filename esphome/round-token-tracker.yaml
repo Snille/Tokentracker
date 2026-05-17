@@ -7,21 +7,20 @@ substitutions:
   friendly_name: Storstugan - Office - Token Tracker
 
   # Home Assistant entity IDs that provide the account values (mirrored locally as sensors below).
-  openai_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_today
-  openai_input_tokens_entity: sensor.tokentracker_vs_code_codex_input_tokens_today
-  openai_cached_input_tokens_entity: sensor.tokentracker_vs_code_codex_cached_input_tokens_today
-  openai_output_tokens_entity: sensor.tokentracker_vs_code_codex_output_tokens_today
-  openai_reasoning_output_tokens_entity: sensor.tokentracker_vs_code_codex_reasoning_output_tokens_today
-  anthropic_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_today
-  anthropic_input_tokens_entity: sensor.tokentracker_vs_code_claude_code_input_tokens_today
-  anthropic_cache_creation_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_today
-  anthropic_cache_read_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_read_tokens_today
-  anthropic_output_tokens_entity: sensor.tokentracker_vs_code_claude_code_output_tokens_today
+  openai_week_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_week
+  openai_week_input_tokens_entity: sensor.tokentracker_vs_code_codex_input_tokens_week
+  openai_week_cached_input_tokens_entity: sensor.tokentracker_vs_code_codex_cached_input_tokens_week
+  openai_week_output_tokens_entity: sensor.tokentracker_vs_code_codex_output_tokens_week
+  openai_week_reasoning_output_tokens_entity: sensor.tokentracker_vs_code_codex_reasoning_output_tokens_week
+  anthropic_week_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_week
+  anthropic_week_input_tokens_entity: sensor.tokentracker_vs_code_claude_code_input_tokens_week
+  anthropic_week_cache_creation_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_week
+  anthropic_week_cache_read_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_read_tokens_week
+  anthropic_week_output_tokens_entity: sensor.tokentracker_vs_code_claude_code_output_tokens_week
+  vscode_updated_at_epoch_entity: sensor.tokentracker_vs_code_updated_at_epoch
   openrouter_tokens_entity: sensor.openrouter_tokens_today
   openrouter_balance_entity: sensor.openrouter_balance_remaining
   openrouter_usage_percent_entity: sensor.openrouter_usage_percent
-  openrouter_key_limit_remaining_entity: sensor.openrouter_key_limit_remaining
-  openrouter_key_usage_percent_entity: sensor.openrouter_key_usage_percent
   openrouter_cost_today_entity: sensor.openrouter_cost_today
   openrouter_cost_week_entity: sensor.openrouter_cost_week
   openrouter_cost_month_entity: sensor.openrouter_cost_month
@@ -61,7 +60,7 @@ esphome:
     board_build.f_cpu: 240000000L
   project:
     name: snille.token-tracker
-    version: "1.8.1"
+    version: "1.10.0"
   on_boot:
     # Priority -100 = runs late, after hardware components have been set up.
     priority: -100
@@ -69,7 +68,7 @@ esphome:
       - logger.log:
           level: INFO
           tag: tokentracker
-          format: "TokenTracker ESPHome build 1.8.1: rich provider and overview screens"
+          format: "TokenTracker ESPHome build 1.10.0: configurable Codex/Claude 5h windows"
       - lambda: |-
           float brightness_percent = id(display_brightness_percent).state;
           if (isnan(brightness_percent)) brightness_percent = 70.0f;
@@ -231,6 +230,72 @@ globals:
     type: uint32_t
     restore_value: false
     initial_value: "0"
+  # 5h token-window tracking. Week counters come from the VS Code extension;
+  # these baselines let the display derive the current configurable 5h bucket.
+  - id: codex_period_index
+    type: int
+    restore_value: true
+    initial_value: "-1"
+  - id: claude_period_index
+    type: int
+    restore_value: true
+    initial_value: "-1"
+  - id: codex_period_anchor_ts
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: claude_period_anchor_ts
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: codex_period_start_minutes
+    type: int
+    restore_value: true
+    initial_value: "-1"
+  - id: claude_period_start_minutes
+    type: int
+    restore_value: true
+    initial_value: "-1"
+  - id: codex_period_total_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: codex_period_input_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: codex_period_cached_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: codex_period_output_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: codex_period_reasoning_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: claude_period_total_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: claude_period_input_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: claude_period_cache_creation_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: claude_period_cache_read_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: claude_period_output_baseline
+    type: float
+    restore_value: true
+    initial_value: "0"
 
 # Pull the wall-clock time from Home Assistant (no RTC on this board).
 time:
@@ -335,39 +400,42 @@ image:
       id: img_openwebui_small
       resize: 52x52
 
-# Sensors: Home Assistant entries mirror raw usage values locally. Daily goals,
+# Sensors: Home Assistant entries mirror raw usage values locally. Local limits,
 # tokens-left and usage percentages are computed on the device.
 sensor:
   - platform: homeassistant
-    id: openai_tokens_today
-    entity_id: ${openai_tokens_entity}
+    id: openai_tokens_week
+    entity_id: ${openai_week_tokens_entity}
   - platform: homeassistant
-    id: openai_input_tokens_today
-    entity_id: ${openai_input_tokens_entity}
+    id: openai_input_tokens_week
+    entity_id: ${openai_week_input_tokens_entity}
   - platform: homeassistant
-    id: openai_cached_input_tokens_today
-    entity_id: ${openai_cached_input_tokens_entity}
+    id: openai_cached_input_tokens_week
+    entity_id: ${openai_week_cached_input_tokens_entity}
   - platform: homeassistant
-    id: openai_output_tokens_today
-    entity_id: ${openai_output_tokens_entity}
+    id: openai_output_tokens_week
+    entity_id: ${openai_week_output_tokens_entity}
   - platform: homeassistant
-    id: openai_reasoning_output_tokens_today
-    entity_id: ${openai_reasoning_output_tokens_entity}
+    id: openai_reasoning_output_tokens_week
+    entity_id: ${openai_week_reasoning_output_tokens_entity}
   - platform: homeassistant
-    id: anthropic_tokens_today
-    entity_id: ${anthropic_tokens_entity}
+    id: anthropic_tokens_week
+    entity_id: ${anthropic_week_tokens_entity}
   - platform: homeassistant
-    id: anthropic_input_tokens_today
-    entity_id: ${anthropic_input_tokens_entity}
+    id: anthropic_input_tokens_week
+    entity_id: ${anthropic_week_input_tokens_entity}
   - platform: homeassistant
-    id: anthropic_cache_creation_tokens_today
-    entity_id: ${anthropic_cache_creation_tokens_entity}
+    id: anthropic_cache_creation_tokens_week
+    entity_id: ${anthropic_week_cache_creation_tokens_entity}
   - platform: homeassistant
-    id: anthropic_cache_read_tokens_today
-    entity_id: ${anthropic_cache_read_tokens_entity}
+    id: anthropic_cache_read_tokens_week
+    entity_id: ${anthropic_week_cache_read_tokens_entity}
   - platform: homeassistant
-    id: anthropic_output_tokens_today
-    entity_id: ${anthropic_output_tokens_entity}
+    id: anthropic_output_tokens_week
+    entity_id: ${anthropic_week_output_tokens_entity}
+  - platform: homeassistant
+    id: vscode_updated_at_epoch
+    entity_id: ${vscode_updated_at_epoch_entity}
   - platform: homeassistant
     id: openrouter_tokens_today
     entity_id: ${openrouter_tokens_entity}
@@ -377,12 +445,6 @@ sensor:
   - platform: homeassistant
     id: openrouter_usage_percent
     entity_id: ${openrouter_usage_percent_entity}
-  - platform: homeassistant
-    id: openrouter_key_limit_remaining
-    entity_id: ${openrouter_key_limit_remaining_entity}
-  - platform: homeassistant
-    id: openrouter_key_usage_percent
-    entity_id: ${openrouter_key_usage_percent_entity}
   - platform: homeassistant
     id: openrouter_cost_today
     entity_id: ${openrouter_cost_today_entity}
@@ -549,7 +611,7 @@ number:
 
   - platform: template
     id: codex_daily_token_goal
-    name: Codex Max
+    name: Max Codex / 5h
     icon: mdi:target
     entity_category: config
     optimistic: true
@@ -563,7 +625,7 @@ number:
 
   - platform: template
     id: claude_daily_token_goal
-    name: Claude Max
+    name: Max Claude / 5h
     icon: mdi:target
     entity_category: config
     optimistic: true
@@ -576,8 +638,64 @@ number:
     unit_of_measurement: ktokens
 
   - platform: template
+    id: codex_5h_start_hour
+    name: Codex 5h Start Hour
+    icon: mdi:clock-start
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 24
+    step: 1
+    mode: slider
+    initial_value: 0
+    unit_of_measurement: h
+
+  - platform: template
+    id: codex_5h_start_minute
+    name: Codex 5h Start Minute
+    icon: mdi:clock-start
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 59
+    step: 1
+    mode: slider
+    initial_value: 0
+    unit_of_measurement: min
+
+  - platform: template
+    id: claude_5h_start_hour
+    name: Claude 5h Start Hour
+    icon: mdi:clock-start
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 24
+    step: 1
+    mode: slider
+    initial_value: 0
+    unit_of_measurement: h
+
+  - platform: template
+    id: claude_5h_start_minute
+    name: Claude 5h Start Minute
+    icon: mdi:clock-start
+    entity_category: config
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 59
+    step: 1
+    mode: slider
+    initial_value: 0
+    unit_of_measurement: min
+
+  - platform: template
     id: openwebui_daily_token_goal
-    name: WebUI Max
+    name: Max WebUI
     icon: mdi:target
     entity_category: config
     optimistic: true
@@ -820,10 +938,11 @@ binary_sensor:
           }
           id(main_display).update();
 
-# Periodic tasks. Three independent intervals:
+# Periodic tasks. Four independent intervals:
 #   1) 100 ms - button hold detection.
 #   2) 1 s    - IMU read + auto-orientation handling.
-#   3) 1 s    - auto-rotate of screens.
+#   3) 1 s    - configured Codex/Claude 5h token-window baseline tracking.
+#   4) 1 s    - auto-rotate of screens.
 interval:
   - interval: 100ms
     then:
@@ -933,6 +1052,87 @@ interval:
             ESP_LOGI("tokentracker", "Auto orientation step changed %d -> %d (x=%.3f y=%.3f)", id(auto_orientation_steps), detected, x, y);
             id(auto_orientation_steps) = detected;
             id(main_display).update();
+          }
+
+  # Codex/Claude 5h windows are anchored from HA-configurable start times.
+  # The display keeps per-period baselines against weekly counters.
+  - interval: 1s
+    then:
+      - lambda: |-
+          auto now = id(home_assistant_time).now();
+          if (!now.is_valid()) return;
+
+          auto safe_value = [](float value) -> float {
+            return isnan(value) ? 0.0f : value;
+          };
+
+          auto configured_start_minutes = [](float hour_value, float minute_value) -> int {
+            int hour = isnan(hour_value) ? 0 : (int) hour_value;
+            int minute = isnan(minute_value) ? 0 : (int) minute_value;
+            if (hour < 0) hour = 0;
+            if (hour >= 24) hour = 0;
+            if (minute < 0) minute = 0;
+            if (minute > 59) minute = 59;
+            return hour * 60 + minute;
+          };
+
+          auto reset_anchor = [&](int start_minutes) -> int {
+            const int start_seconds_of_day = start_minutes * 60;
+            const int now_seconds_of_day = now.hour * 3600 + now.minute * 60 + now.second;
+            int anchor = (int) now.timestamp - now_seconds_of_day + start_seconds_of_day;
+            while (anchor > (int) now.timestamp) anchor -= 24 * 60 * 60;
+            return anchor;
+          };
+
+          auto current_period_index = [&](int anchor_ts) -> int {
+            const int64_t period_seconds = 5LL * 60LL * 60LL;
+            int64_t period_start = anchor_ts;
+            if (period_start <= 0) period_start = reset_anchor(0);
+            if (period_start > (int64_t) now.timestamp) {
+              int64_t periods_back = ((period_start - (int64_t) now.timestamp) / period_seconds) + 1;
+              period_start -= periods_back * period_seconds;
+            }
+            int64_t periods_since_anchor = ((int64_t) now.timestamp - period_start) / period_seconds;
+            period_start += periods_since_anchor * period_seconds;
+            return (int) (period_start / 60LL);
+          };
+
+          if (!isnan(id(openai_tokens_week).state)) {
+            const int codex_start_minutes = configured_start_minutes(id(codex_5h_start_hour).state, id(codex_5h_start_minute).state);
+            if (id(codex_period_anchor_ts) <= 0 || id(codex_period_start_minutes) != codex_start_minutes) {
+              id(codex_period_anchor_ts) = reset_anchor(codex_start_minutes);
+              id(codex_period_start_minutes) = codex_start_minutes;
+              id(codex_period_index) = -1;
+            }
+            const int codex_index = current_period_index(id(codex_period_anchor_ts));
+            if (id(codex_period_index) != codex_index || safe_value(id(openai_tokens_week).state) < id(codex_period_total_baseline)) {
+              id(codex_period_index) = codex_index;
+              id(codex_period_total_baseline) = safe_value(id(openai_tokens_week).state);
+              id(codex_period_input_baseline) = safe_value(id(openai_input_tokens_week).state);
+              id(codex_period_cached_baseline) = safe_value(id(openai_cached_input_tokens_week).state);
+              id(codex_period_output_baseline) = safe_value(id(openai_output_tokens_week).state);
+              id(codex_period_reasoning_baseline) = safe_value(id(openai_reasoning_output_tokens_week).state);
+              ESP_LOGI("tokentracker", "Codex 5h period reset at index %d", codex_index);
+            }
+          }
+
+          if (!isnan(id(anthropic_tokens_week).state)) {
+            const int claude_start_minutes = configured_start_minutes(id(claude_5h_start_hour).state, id(claude_5h_start_minute).state);
+            if (id(claude_period_anchor_ts) <= 0 || id(claude_period_start_minutes) != claude_start_minutes) {
+              id(claude_period_anchor_ts) = reset_anchor(claude_start_minutes);
+              id(claude_period_start_minutes) = claude_start_minutes;
+              id(claude_period_index) = -1;
+            }
+            const int claude_index = current_period_index(id(claude_period_anchor_ts));
+            if (id(claude_period_index) != claude_index || safe_value(id(anthropic_tokens_week).state) < id(claude_period_total_baseline)) {
+              id(claude_period_index) = claude_index;
+              id(claude_period_total_baseline) = safe_value(id(anthropic_tokens_week).state);
+              id(claude_period_input_baseline) = safe_value(id(anthropic_input_tokens_week).state);
+              id(claude_period_cache_creation_baseline) = safe_value(id(anthropic_cache_creation_tokens_week).state);
+              id(claude_period_cache_read_baseline) = safe_value(id(anthropic_cache_read_tokens_week).state);
+              id(claude_period_output_baseline) = safe_value(id(anthropic_output_tokens_week).state);
+              ESP_LOGI("tokentracker", "Claude 5h period reset at index %d", claude_index);
+            }
           }
 
   # Auto-rotate carousel: single screens use Screen Interval, overview uses
@@ -1131,11 +1331,75 @@ display:
         return used * 100.0f / goal;
       };
 
+      auto remaining_percent = [](float used_percent) -> float {
+        if (isnan(used_percent)) return 0.0f;
+        float pct = 100.0f - used_percent;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+        return pct;
+      };
+
+      auto openrouter_today_credit_percent = [&](float cost_today, float balance_remaining, float used_percent) -> float {
+        if (isnan(cost_today) || cost_today <= 0.0f) return 0.0f;
+        if (isnan(balance_remaining) || balance_remaining <= 0.0f) return 0.0f;
+        if (isnan(used_percent) || used_percent < 0.0f || used_percent >= 100.0f) return 0.0f;
+        const float total_credits = balance_remaining / (1.0f - used_percent / 100.0f);
+        return usage_from_goal(cost_today, total_credits);
+      };
+
       auto left_from_goal = [](float used, float goal) -> float {
         if (isnan(goal) || goal <= 0.0f) return 0.0f;
         if (isnan(used)) used = 0.0f;
         float left = goal - used;
         return left > 0.0f ? left : 0.0f;
+      };
+
+      auto weekly_goal_from_5h_goal = [](float goal_5h) -> float {
+        if (isnan(goal_5h) || goal_5h <= 0.0f) return 0.0f;
+        return goal_5h * (168.0f / 5.0f);
+      };
+
+      auto period_reset_label = [](int period_index_minutes) -> std::string {
+        if (period_index_minutes < 0) return "--:--";
+        int minutes = (period_index_minutes + 300) % 1440;
+        if (minutes < 0) minutes += 1440;
+        char buffer[8];
+        snprintf(buffer, sizeof(buffer), "%02d:%02d", minutes / 60, minutes % 60);
+        return std::string(buffer);
+      };
+
+      auto vscode_data_age_seconds = [&]() -> int {
+        auto now = id(home_assistant_time).now();
+        float updated = id(vscode_updated_at_epoch).state;
+        if (!now.is_valid() || isnan(updated) || updated <= 0.0f) return -1;
+        return (int) now.timestamp - (int) updated;
+      };
+
+      auto vscode_data_age_label = [&]() -> std::string {
+        int age = vscode_data_age_seconds();
+        if (age < 0) return "Upd --";
+        if (age < 60) return "Upd now";
+        char buffer[16];
+        if (age < 3600) {
+          snprintf(buffer, sizeof(buffer), "Upd %dm", age / 60);
+        } else {
+          snprintf(buffer, sizeof(buffer), "Upd %dh", age / 3600);
+        }
+        return std::string(buffer);
+      };
+
+      auto vscode_data_stale = [&]() -> bool {
+        int age = vscode_data_age_seconds();
+        return age < 0 || age > 600;
+      };
+
+      auto weekly_projection = [&](float week_total) -> float {
+        auto now = id(home_assistant_time).now();
+        if (!now.is_valid() || isnan(week_total)) return 0.0f;
+        int days_since_monday = (now.day_of_week + 5) % 7;
+        int elapsed = days_since_monday * 86400 + now.hour * 3600 + now.minute * 60 + now.second;
+        if (elapsed < 3600) return week_total;
+        return week_total * 604800.0f / (float) elapsed;
       };
 
       auto ktokens_to_tokens = [](float ktokens) -> float {
@@ -1182,6 +1446,43 @@ display:
           int y = cy + (int) (radius * sin(angle));
           filled_circle_r(x, y, thickness / 2, accent);
         }
+      };
+
+      auto draw_ring_arc = [&](int start_deg, int end_deg, float usage_percent, Color accent) {
+        const int cx = 233;
+        const int cy = 233;
+        const int radius = 216;
+        const int thickness = 10;
+        float pct = isnan(usage_percent) ? 0.0f : usage_percent;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+
+        const int direction = end_deg >= start_deg ? 1 : -1;
+        const int span = abs(end_deg - start_deg);
+        const int filled_span = (int) (span * (pct / 100.0f));
+
+        for (int offset = 0; offset <= span; offset += 2) {
+          int step = start_deg + direction * offset;
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, 4, Color(31, 36, 45));
+        }
+
+        for (int offset = 0; offset <= filled_span; offset += 2) {
+          int step = start_deg + direction * offset;
+          float angle = (step - 90.0f) * M_PI / 180.0f;
+          int x = cx + (int) (radius * cos(angle));
+          int y = cy + (int) (radius * sin(angle));
+          filled_circle_r(x, y, thickness / 2, accent);
+        }
+      };
+
+      auto draw_split_usage_ring = [&](float usage_5h_percent, float weekly_usage_percent, Color accent) {
+        // Top half: current configured 5h window, left -> top -> right.
+        draw_ring_arc(270, 450, usage_5h_percent, accent);
+        // Bottom half: weekly usage, left -> bottom -> right.
+        draw_ring_arc(270, 90, weekly_usage_percent, blue);
       };
 
       // Inner countdown ring for auto-rotate. It starts full after each screen
@@ -1325,6 +1626,43 @@ display:
         return isnan(value) ? 0.0f : value;
       };
 
+      auto period_delta = [&](float current, float baseline) -> float {
+        if (isnan(current)) return 0.0f;
+        float delta = current - safe_value(baseline);
+        return delta > 0.0f ? delta : 0.0f;
+      };
+
+      auto codex_5h_total = [&]() -> float {
+        return period_delta(id(openai_tokens_week).state, id(codex_period_total_baseline));
+      };
+      auto codex_5h_input = [&]() -> float {
+        return period_delta(id(openai_input_tokens_week).state, id(codex_period_input_baseline));
+      };
+      auto codex_5h_cached = [&]() -> float {
+        return period_delta(id(openai_cached_input_tokens_week).state, id(codex_period_cached_baseline));
+      };
+      auto codex_5h_output = [&]() -> float {
+        return period_delta(id(openai_output_tokens_week).state, id(codex_period_output_baseline));
+      };
+      auto codex_5h_reasoning = [&]() -> float {
+        return period_delta(id(openai_reasoning_output_tokens_week).state, id(codex_period_reasoning_baseline));
+      };
+      auto claude_5h_total = [&]() -> float {
+        return period_delta(id(anthropic_tokens_week).state, id(claude_period_total_baseline));
+      };
+      auto claude_5h_input = [&]() -> float {
+        return period_delta(id(anthropic_input_tokens_week).state, id(claude_period_input_baseline));
+      };
+      auto claude_5h_cache_creation = [&]() -> float {
+        return period_delta(id(anthropic_cache_creation_tokens_week).state, id(claude_period_cache_creation_baseline));
+      };
+      auto claude_5h_cache_read = [&]() -> float {
+        return period_delta(id(anthropic_cache_read_tokens_week).state, id(claude_period_cache_read_baseline));
+      };
+      auto claude_5h_output = [&]() -> float {
+        return period_delta(id(anthropic_output_tokens_week).state, id(claude_period_output_baseline));
+      };
+
       auto draw_split_bar = [&](int x, int y, int width, int height, float left_value, float right_value, Color left_color, Color right_color) {
         float left = safe_value(left_value);
         float right = safe_value(right_value);
@@ -1342,11 +1680,34 @@ display:
         rect_r(x, y, width, height, Color(57, 65, 80));
       };
 
+      auto draw_vertical_center_bar = [&](int x, int inner_y, int outer_y, int width, float usage_percent, Color accent) {
+        float pct = isnan(usage_percent) ? 0.0f : usage_percent;
+        if (pct < 0.0f) pct = 0.0f;
+        if (pct > 100.0f) pct = 100.0f;
+        const int y = inner_y < outer_y ? inner_y : outer_y;
+        const int height = abs(outer_y - inner_y);
+        filled_rect_r(x - width / 2, y, width, height, Color(31, 36, 45));
+        int fill = (int) (height * (pct / 100.0f));
+        if (fill > 0) {
+          if (outer_y < inner_y) {
+            filled_rect_r(x - width / 2, inner_y - fill, width, fill, accent);
+          } else {
+            filled_rect_r(x - width / 2, inner_y, width, fill, accent);
+          }
+        }
+        rect_r(x - width / 2, y, width, height, Color(57, 65, 80));
+      };
+
       auto draw_stat_pair = [&](int y, const char *left_label, const char *left_value, Color left_color, const char *right_label, const char *right_value, Color right_color) {
         printf_r(154, y, id(font_tiny), muted, TextAlign::CENTER, "%s", left_label);
         printf_r(154, y + 23, id(font_label), left_color, TextAlign::CENTER, "%s", left_value);
         printf_r(312, y, id(font_tiny), muted, TextAlign::CENTER, "%s", right_label);
         printf_r(312, y + 23, id(font_label), right_color, TextAlign::CENTER, "%s", right_value);
+      };
+
+      auto draw_stale_badge = [&]() {
+        if (!vscode_data_stale()) return;
+        printf_r(233, 394, id(font_tiny), red, TextAlign::CENTER, "VS Code stale");
       };
 
       auto draw_provider_shell = [&](const char *name, esphome::image::Image *logo, float usage_percent, Color accent) {
@@ -1359,26 +1720,48 @@ display:
         printf_r(233, 108, id(font_small_value), white, TextAlign::CENTER, "%s", name);
       };
 
-      auto draw_token_detail_account = [&](const char *name, esphome::image::Image *logo, float total, float input, float output, float cached, float reasoning, float goal, Color accent) {
+      auto draw_provider_shell_compact = [&](const char *name, esphome::image::Image *logo, float usage_percent, Color accent) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(12, 14, 18));
+        draw_progress_ring(usage_percent, accent);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        image_r(233, 68, logo);
+        printf_r(233, 120, id(font_small_value), white, TextAlign::CENTER, "%s", name);
+      };
+
+      auto draw_token_provider_shell = [&](const char *name, esphome::image::Image *logo, float usage_5h_percent, float weekly_usage_percent, Color accent) {
+        it.fill(black);
+        filled_circle_r(233, 233, 208, Color(12, 14, 18));
+        draw_split_usage_ring(usage_5h_percent, weekly_usage_percent, accent);
+        draw_auto_rotate_timer_ring();
+        circle_r(233, 233, 206, Color(42, 47, 58));
+        image_r(233, 68, logo);
+        printf_r(233, 120, id(font_small_value), white, TextAlign::CENTER, "%s", name);
+      };
+
+      auto draw_token_detail_account = [&](const char *name, esphome::image::Image *logo, float total, float input, float output, float cached, float reasoning, float week_total, float goal, const char *reset_label, Color accent) {
         float pct = usage_from_goal(total, goal);
-        draw_provider_shell(name, logo, pct, accent);
-        printf_r(233, 142, id(font_tiny), muted, TextAlign::CENTER, "Tokens today");
-        printf_r(233, 178, id(font_title), accent, TextAlign::CENTER, "%s", tokens(total).c_str());
-        printf_r(118, 211, id(font_tiny), green, TextAlign::LEFT, "Input");
-        printf_r(348, 211, id(font_tiny), red, TextAlign::RIGHT, "Output");
+        float week_pct = usage_from_goal(week_total, weekly_goal_from_5h_goal(goal));
+        draw_token_provider_shell(name, logo, pct, week_pct, accent);
+        printf_r(233, 150, id(font_tiny), muted, TextAlign::CENTER, "Tokens / 5h");
+        printf_r(233, 184, id(font_title), accent, TextAlign::CENTER, "%s", tokens(total).c_str());
+        printf_r(118, 203, id(font_tiny), green, TextAlign::LEFT, "Input");
+        printf_r(348, 203, id(font_tiny), red, TextAlign::RIGHT, "Output");
         draw_split_bar(126, 230, 214, 7, input, output, green, red);
         draw_stat_pair(255, "Input", tokens(input).c_str(), green, "Output", tokens(output).c_str(), red);
         draw_stat_pair(303, "Cached", tokens(cached).c_str(), blue, "Reason", tokens(reasoning).c_str(), amber);
-        draw_stat_pair(351, "Left", tokens(left_from_goal(total, goal)).c_str(), accent, "Goal", tokens(goal).c_str(), white);
+        draw_stat_pair(351, "Week", tokens(week_total).c_str(), white, "Reset", reset_label, accent);
+        draw_stale_badge();
       };
 
       auto draw_router_detail_account = [&]() {
         float usage_pct = id(openrouter_usage_percent).state;
-        draw_provider_shell("OpenRouter", id(img_openrouter_small), usage_pct, blue);
-        printf_r(233, 142, id(font_tiny), muted, TextAlign::CENTER, "Balance left");
-        printf_r(233, 178, id(font_title), blue, TextAlign::CENTER, "%s", money(id(openrouter_balance_remaining).state).c_str());
-        printf_r(118, 211, id(font_tiny), green, TextAlign::LEFT, "Prompt");
-        printf_r(348, 211, id(font_tiny), red, TextAlign::RIGHT, "Completion");
+        draw_provider_shell_compact("OpenRouter", id(img_openrouter_small), usage_pct, blue);
+        printf_r(233, 150, id(font_tiny), muted, TextAlign::CENTER, "Balance left");
+        printf_r(233, 184, id(font_title), blue, TextAlign::CENTER, "%s", money(id(openrouter_balance_remaining).state).c_str());
+        printf_r(118, 203, id(font_tiny), green, TextAlign::LEFT, "Prompt");
+        printf_r(348, 203, id(font_tiny), red, TextAlign::RIGHT, "Completion");
         draw_split_bar(126, 230, 214, 7, id(openrouter_activity_prompt_tokens).state, id(openrouter_activity_completion_tokens).state, green, red);
         draw_stat_pair(255, "Today", money(id(openrouter_cost_today).state).c_str(), green, "Keys", tokens(id(openrouter_key_count).state).c_str(), white);
         draw_stat_pair(303, "Hist In", tokens(id(openrouter_activity_prompt_tokens).state).c_str(), green, "Hist Out", tokens(id(openrouter_activity_completion_tokens).state).c_str(), red);
@@ -1389,11 +1772,11 @@ display:
         float tokens_today = id(openwebui_tokens_today).state;
         float goal = ktokens_to_tokens(id(openwebui_daily_token_goal).state);
         float pct = usage_from_goal(tokens_today, goal);
-        draw_provider_shell("Open WebUI", id(img_openwebui_small), pct, red);
-        printf_r(233, 142, id(font_tiny), muted, TextAlign::CENTER, "Tokens today");
-        printf_r(233, 178, id(font_title), red, TextAlign::CENTER, "%s", tokens(tokens_today).c_str());
-        printf_r(118, 211, id(font_tiny), green, TextAlign::LEFT, "Input");
-        printf_r(348, 211, id(font_tiny), red, TextAlign::RIGHT, "Output");
+        draw_provider_shell_compact("Open WebUI", id(img_openwebui_small), pct, red);
+        printf_r(233, 150, id(font_tiny), muted, TextAlign::CENTER, "Tokens today");
+        printf_r(233, 184, id(font_title), red, TextAlign::CENTER, "%s", tokens(tokens_today).c_str());
+        printf_r(118, 203, id(font_tiny), green, TextAlign::LEFT, "Input");
+        printf_r(348, 203, id(font_tiny), red, TextAlign::RIGHT, "Output");
         draw_split_bar(126, 230, 214, 7, id(openwebui_input_tokens_today).state, id(openwebui_output_tokens_today).state, green, red);
         draw_stat_pair(255, "Input", tokens(id(openwebui_input_tokens_today).state).c_str(), green, "Output", tokens(id(openwebui_output_tokens_today).state).c_str(), red);
         draw_stat_pair(303, "Chats", tokens(id(openwebui_chats_today).state).c_str(), amber, "Models", tokens(id(openwebui_models_today).state).c_str(), blue);
@@ -1476,34 +1859,38 @@ display:
 
       // Screen 1: Codex (OpenAI) tokens, green accent.
       if (id(current_screen) == 1) {
-        float codex_used = id(openai_tokens_today).state;
+        float codex_used = codex_5h_total();
         float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
         draw_token_detail_account(
           "Codex",
           id(img_openai_small),
           codex_used,
-          id(openai_input_tokens_today).state,
-          id(openai_output_tokens_today).state,
-          id(openai_cached_input_tokens_today).state,
-          id(openai_reasoning_output_tokens_today).state,
+          codex_5h_input(),
+          codex_5h_output(),
+          codex_5h_cached(),
+          codex_5h_reasoning(),
+          id(openai_tokens_week).state,
           codex_goal,
+          period_reset_label(id(codex_period_index)).c_str(),
           green);
         draw_footer(1, green);
         return;
       }
       // Screen 2: Claude Code (Anthropic) tokens, amber accent.
       if (id(current_screen) == 2) {
-        float claude_used = id(anthropic_tokens_today).state;
+        float claude_used = claude_5h_total();
         float claude_goal = ktokens_to_tokens(id(claude_daily_token_goal).state);
         draw_token_detail_account(
           "Claude Code",
           id(img_anthropic_small),
           claude_used,
-          id(anthropic_input_tokens_today).state,
-          id(anthropic_output_tokens_today).state,
-          id(anthropic_cache_read_tokens_today).state + id(anthropic_cache_creation_tokens_today).state,
+          claude_5h_input(),
+          claude_5h_output(),
+          claude_5h_cache_read() + claude_5h_cache_creation(),
           0.0f,
+          id(anthropic_tokens_week).state,
           claude_goal,
+          period_reset_label(id(claude_period_index)).c_str(),
           amber);
         draw_footer(2, amber);
         return;
@@ -1521,15 +1908,20 @@ display:
         return;
       }
       // Screen 5: Overview - four account arcs + four small tiles + center clock.
-      float codex_used = id(openai_tokens_today).state;
+      float codex_used = codex_5h_total();
       float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
       float codex_pct = usage_from_goal(codex_used, codex_goal);
-      float claude_used = id(anthropic_tokens_today).state;
+      float codex_week_pct = usage_from_goal(id(openai_tokens_week).state, weekly_goal_from_5h_goal(codex_goal));
+      float claude_used = claude_5h_total();
       float claude_goal = ktokens_to_tokens(id(claude_daily_token_goal).state);
       float claude_pct = usage_from_goal(claude_used, claude_goal);
+      float claude_week_pct = usage_from_goal(id(anthropic_tokens_week).state, weekly_goal_from_5h_goal(claude_goal));
       float owui_used = id(openwebui_tokens_today).state;
       float owui_goal = ktokens_to_tokens(id(openwebui_daily_token_goal).state);
       float owui_pct = usage_from_goal(owui_used, owui_goal);
+      float router_remaining_pct = remaining_percent(id(openrouter_usage_percent).state);
+      float router_today_pct = openrouter_today_credit_percent(id(openrouter_cost_today).state, id(openrouter_balance_remaining).state, id(openrouter_usage_percent).state);
+      float owui_output_pct = safe_value(id(openwebui_output_token_percent_today).state);
       if (id(current_screen) == 5) {
         it.fill(black);
         filled_circle_r(233, 233, 208, Color(10, 13, 16));
@@ -1537,16 +1929,24 @@ display:
         // bottom-right=Open WebUI. (Angle 0 is at 3 o'clock, increasing CW.)
         draw_quarter_usage_arc(180, 270, codex_pct, green);
         draw_quarter_usage_arc(270, 360, claude_pct, amber);
-        draw_quarter_usage_arc(90, 180, id(openrouter_key_usage_percent).state, blue);
+        draw_quarter_usage_arc(90, 180, router_remaining_pct, blue);
         draw_quarter_usage_arc(0, 90, owui_pct, red);
         draw_auto_rotate_timer_ring();
         line_r(233, 32, 233, 434, Color(42, 47, 58));
         line_r(32, 233, 434, 233, Color(42, 47, 58));
         circle_r(233, 233, 206, Color(42, 47, 58));
         draw_overview_clock(id(home_assistant_time).now());
+        draw_vertical_center_bar(208, 185, 86, 9, codex_week_pct, blue);
+        draw_vertical_center_bar(258, 185, 86, 9, claude_week_pct, blue);
+        draw_vertical_center_bar(208, 281, 380, 9, router_today_pct, blue);
+        draw_vertical_center_bar(258, 281, 380, 9, owui_output_pct, red);
+        printf_r(208, 76, id(font_tiny), blue, TextAlign::CENTER, "Wk");
+        printf_r(258, 76, id(font_tiny), blue, TextAlign::CENTER, "Wk");
+        printf_r(208, 396, id(font_tiny), blue, TextAlign::CENTER, "$");
+        printf_r(258, 396, id(font_tiny), red, TextAlign::CENTER, "Out");
         draw_overview_tile(148, 135, "Codex", id(img_openai_small), tokens(codex_used).c_str(), codex_pct, green);
         draw_overview_tile(318, 135, "Claude", id(img_anthropic_small), tokens(claude_used).c_str(), claude_pct, amber);
-        draw_overview_tile(148, 313, "Router", id(img_openrouter_small), money(id(openrouter_key_limit_remaining).state).c_str(), id(openrouter_key_usage_percent).state, blue);
+        draw_overview_tile(148, 313, "Router", id(img_openrouter_small), money(id(openrouter_balance_remaining).state).c_str(), router_remaining_pct, blue);
         draw_overview_tile(318, 313, "WebUI", id(img_openwebui_small), tokens(owui_used).c_str(), owui_pct, red);
         draw_footer(5, white);
         return;
@@ -1559,14 +1959,14 @@ display:
         draw_auto_rotate_timer_ring();
         circle_r(233, 233, 206, Color(42, 47, 58));
         printf_r(233, 74, id(font_title), white, TextAlign::CENTER, "I/O Mix");
-        float total_input = id(openai_input_tokens_today).state + id(anthropic_input_tokens_today).state + id(openwebui_input_tokens_today).state + id(openrouter_activity_prompt_tokens).state;
-        float total_output = id(openai_output_tokens_today).state + id(anthropic_output_tokens_today).state + id(openwebui_output_tokens_today).state + id(openrouter_activity_completion_tokens).state;
+        float total_input = codex_5h_input() + claude_5h_input() + id(openwebui_input_tokens_today).state + id(openrouter_activity_prompt_tokens).state;
+        float total_output = codex_5h_output() + claude_5h_output() + id(openwebui_output_tokens_today).state + id(openrouter_activity_completion_tokens).state;
         float total_all = total_input + total_output;
         printf_r(233, 118, id(font_tiny), muted, TextAlign::CENTER, "All visible sources");
         printf_r(233, 162, id(font_title), white, TextAlign::CENTER, "%s", tokens(total_all).c_str());
         draw_split_bar(126, 192, 214, 7, total_input, total_output, green, red);
         draw_stat_pair(218, "Input", tokens(total_input).c_str(), green, "Output", tokens(total_output).c_str(), red);
-        draw_stat_pair(276, "Cached", tokens(id(openai_cached_input_tokens_today).state + id(anthropic_cache_creation_tokens_today).state + id(anthropic_cache_read_tokens_today).state).c_str(), blue, "Reason", tokens(id(openai_reasoning_output_tokens_today).state + id(openrouter_activity_reasoning_tokens).state).c_str(), amber);
+        draw_stat_pair(276, "Cached", tokens(codex_5h_cached() + claude_5h_cache_creation() + claude_5h_cache_read()).c_str(), blue, "Reason", tokens(codex_5h_reasoning() + id(openrouter_activity_reasoning_tokens).state).c_str(), amber);
         draw_stat_pair(334, "Router $", money(id(openrouter_cost_today).state).c_str(), blue, "WebUI %", percent(id(openwebui_output_token_percent_today).state).c_str(), red);
         draw_footer(6, white);
         return;
@@ -1577,16 +1977,20 @@ display:
       filled_circle_r(233, 233, 208, Color(10, 13, 16));
       draw_auto_rotate_timer_ring();
       circle_r(233, 233, 206, Color(42, 47, 58));
-      printf_r(233, 70, id(font_title), white, TextAlign::CENTER, "Today");
-      float live_tokens = codex_used + claude_used + owui_used;
-      printf_r(233, 130, id(font_tiny), muted, TextAlign::CENTER, "Local plus self-hosted");
-      printf_r(233, 170, id(font_title), green, TextAlign::CENTER, "%s", tokens(live_tokens).c_str());
-      draw_overview_metric(154, 228, "Codex", tokens(codex_used).c_str(), green);
-      draw_overview_metric(312, 228, "Claude", tokens(claude_used).c_str(), amber);
-      draw_overview_metric(154, 286, "WebUI", tokens(owui_used).c_str(), red);
-      draw_overview_metric(312, 286, "Router", money(id(openrouter_cost_today).state).c_str(), blue);
-      draw_overview_metric(154, 344, "Chats", tokens(id(openwebui_chats_today).state).c_str(), red);
-      draw_overview_metric(312, 344, "Keys", tokens(id(openrouter_key_count).state).c_str(), blue);
+      printf_r(233, 84, id(font_title), white, TextAlign::CENTER, "5h + Week");
+      printf_r(233, 116, id(font_tiny), vscode_data_stale() ? red : muted, TextAlign::CENTER, "%s", vscode_data_age_label().c_str());
+      float codex_left = left_from_goal(codex_used, codex_goal);
+      float claude_left = left_from_goal(claude_used, claude_goal);
+      float total_5h = codex_used + claude_used;
+      float total_left = codex_left + claude_left;
+      printf_r(233, 158, id(font_title), green, TextAlign::CENTER, "%s", tokens(total_5h).c_str());
+      draw_overview_metric(154, 204, "5h used", tokens(total_5h).c_str(), green);
+      draw_overview_metric(312, 204, "5h left", tokens(total_left).c_str(), white);
+      draw_overview_metric(154, 262, "Codex wk", tokens(id(openai_tokens_week).state).c_str(), blue);
+      draw_overview_metric(312, 262, "Claude wk", tokens(id(anthropic_tokens_week).state).c_str(), blue);
+      draw_overview_metric(154, 320, "C pace", tokens(weekly_projection(id(openai_tokens_week).state)).c_str(), green);
+      draw_overview_metric(312, 320, "Cl pace", tokens(weekly_projection(id(anthropic_tokens_week).state)).c_str(), amber);
+      draw_stale_badge();
       draw_footer(7, white);
       return;
 
@@ -1734,6 +2138,36 @@ touchscreen:
           id(touch_is_active) = false;
 
           if (abs_dx < swipe_threshold || abs_dx < abs_dy * 1.20f) {
+            if (id(current_screen) == 5 && abs_dx < 18 && abs_dy < 18) {
+              int tx = id(swipe_start_x);
+              int ty = id(swipe_start_y);
+              const int rotation_steps_for_tap = (id(display_rotation_steps) + id(auto_orientation_steps)) % 4;
+              if (rotation_steps_for_tap == 1) {
+                int old_tx = tx;
+                tx = ty;
+                ty = 465 - old_tx;
+              } else if (rotation_steps_for_tap == 2) {
+                tx = 465 - tx;
+                ty = 465 - ty;
+              } else if (rotation_steps_for_tap == 3) {
+                int old_tx = tx;
+                tx = 465 - ty;
+                ty = old_tx;
+              }
+              int target = 4;
+              if (tx < 233 && ty < 233) target = 1;
+              else if (tx >= 233 && ty < 233) target = 2;
+              else if (tx < 233 && ty >= 233) target = 3;
+              if (enabled(target)) {
+                id(current_screen) = target;
+                if (!id(auto_rotate_paused)) id(last_auto_advance_ms) = millis();
+                id(main_display).update();
+              }
+            } else if (id(current_screen) >= 1 && id(current_screen) <= 4 && abs_dx < 18 && abs_dy < 18 && enabled(5)) {
+              id(current_screen) = 5;
+              if (!id(auto_rotate_paused)) id(last_auto_advance_ms) = millis();
+              id(main_display).update();
+            }
             return;
           }
 

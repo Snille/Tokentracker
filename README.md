@@ -1,6 +1,6 @@
 # Token Tracker
 
-Project version: `0.2.0`
+Project version: `0.3.0`
 
 Token Tracker är en personlig AI-usage-display för Waveshare ESP32-S3 Touch
 AMOLED 1.75, Home Assistant och en liten VS Code-extension.
@@ -18,12 +18,15 @@ ut entity-id:n, MQTT-inställningar och API-secrets.
 
 ## Versions
 
-- Project: `0.2.0` (`VERSION`)
-- ESPHome display: `1.8.1`
+- Project: `0.3.0` (`VERSION`)
+- ESPHome display: `1.10.0`
 - Home Assistant package: `1.2.1`
-- VS Code extension: `1.2.1`
+- VS Code extension: `1.2.2`
 
 Se `HISTORY.md` för ändringshistorik.
+
+Se `INSTALL.md` för en steg-för-steg-installation från tom Home Assistant/VS
+Code/ESPHome-miljö.
 
 ## Datamodell
 
@@ -32,19 +35,23 @@ procent. Maxvärden justeras som config-entities på ESPHome-enheten.
 
 | Källa | HA-entity | Ansvar |
 | --- | --- | --- |
-| Codex | `sensor.tokentracker_vs_code_codex_tokens_today` | VS Code-extension läser lokala Codex sessions/SQLite och publicerar tokens idag via MQTT |
-| Claude Code | `sensor.tokentracker_vs_code_claude_code_tokens_today` | VS Code-extension läser lokala Claude JSONL-loggar och publicerar tokens idag via MQTT |
+| Codex | `sensor.tokentracker_vs_code_codex_tokens_week` | VS Code-extension läser lokala Codex sessions/SQLite och publicerar veckotokens via MQTT |
+| Claude Code | `sensor.tokentracker_vs_code_claude_code_tokens_week` | VS Code-extension läser lokala Claude JSONL-loggar och publicerar veckotokens via MQTT |
 | Open WebUI | `sensor.openwebui_tokens_today` | HA REST package hämtar tokens idag från Open WebUI analytics |
-| OpenRouter | `sensor.openrouter_key_limit_remaining`, `sensor.openrouter_key_usage_percent` | HA REST package hämtar credits/key-data från flera OpenRouter-nycklar |
+| OpenRouter | `sensor.openrouter_balance_remaining`, `sensor.openrouter_usage_percent` | HA REST package hämtar account credits och usage från OpenRouter |
 
-VS Code-extensionen är medvetet "raw-only": den skickar bara dagens tokenvärden
-och underfält för input/output/cache/reasoning där källan har dem.
+VS Code-extensionen är medvetet "raw-only": för Codex och Claude Code skickar
+den veckotokenvärden samt underfält för input/output/cache/reasoning där källan
+har dem. ESPHome-displayen använder veckoräknarna som bas och räknar själv fram
+den konfigurerade 5h-perioden.
+När ett 5h-startvärde ändras sparar ESP:n aktuell veckoräknare som ny baseline;
+därefter fortsätter perioderna var femte timme över dygnsgränser.
 `tokens left`, usage-percent och maxgränser ligger i ESPHome/HA så de kan ändras
 på Token Tracker-enheten.
 
 ## ESPHome-display
 
-Nuvarande ESPHome-version: `1.8.1`.
+Nuvarande ESPHome-version: `1.10.0`.
 
 Displayen visar:
 
@@ -56,30 +63,38 @@ Displayen visar:
 - Quadrant overview med Codex, Claude Code, OpenRouter, Open WebUI och analog
   klocka.
 - I/O Mix med input/output/cache/reasoning över alla källor.
-- Today med dagens live-tokenvärden, OpenRouter-kostnad, chats och key-count.
+- 5h + Week med lokala 5h-värden, veckototaler, chats och key-count.
 
 Styrning:
 
 - Swipe vänster/höger byter skärm.
+- Tryck på en individuell provider-skärm hoppar tillbaka till quadrant-översikten.
+- Tryck på en quadrant hoppar till motsvarande provider-skärm.
 - Kort tryck på fysiska toppknappen pausar/återupptar auto-rotate-timern.
 - Långt tryck på toppknappen släcker/tänder displayen.
 - `Next Screen` och `Previous Screen` finns också som HA-knappar.
 
 Visuella ringar:
 
-- Yttre usage-ring visar användning mot maxvärde.
+- Yttre usage-ring visar användning mot maxvärde. För Codex och Claude Code är
+  den delad: övre halvan visar 5h-användningen och nedre blå halvan visar
+  veckoförbrukningen relativt en veckobudget baserad på samma 5h-max.
+  OpenRouter och Open WebUI behåller sin tidigare helringslogik.
 - Mörkblå inre timer-ring visar tid kvar till nästa auto-rotate och släcks när
   auto-rotate är pausad.
 - Klocksidan använder yttre ringen som sekundvisare.
 
 Viktiga config-entities på ESPHome-enheten:
 
-- `Codex Max` i ktokens.
-- `Claude Max` i ktokens.
-- `WebUI Max` i ktokens.
+- `Max Codex / 5h` i ktokens.
+- `Max Claude / 5h` i ktokens.
+- Codex/Claude Max gäller per konfigurerad 5h-period.
+- `Max WebUI` i ktokens.
+- `Codex 5h Start Hour` och `Codex 5h Start Minute`.
+- `Claude 5h Start Hour` och `Claude 5h Start Minute`.
 - `Display Brightness Percent`.
 - `Screen Interval` för singel-skärmarna.
-- `Overview Screen Interval` för quadrant-, I/O Mix- och Today-skärmarna.
+- `Overview Screen Interval` för quadrant-, I/O Mix- och 5h + Week-skärmarna.
 - `Display Rotation`.
 - `Auto Orientation`.
 - `Auto Rotate Screens`.
@@ -90,8 +105,8 @@ Substitutions i början av `esphome/round-token-tracker.yaml` styr entity-id:n o
 slider-maxvärden. Exempel:
 
 ```yaml
-openai_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_today
-anthropic_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_today
+openai_week_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_week
+anthropic_week_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_week
 openwebui_tokens_entity: sensor.openwebui_tokens_today
 codex_max_ktokens: "250000"
 claude_max_ktokens: "250000"

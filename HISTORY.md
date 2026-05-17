@@ -1,5 +1,31 @@
 # History
 
+## 0.3.0 - 2026-05-17
+
+- Bumped ESPHome display to `1.10.0`.
+- Bumped VS Code extension to `1.2.2`.
+- Changed Codex and Claude Code tracking from day totals to week totals.
+- Updated the ESPHome Codex/Claude usage rings to use 5h usage while showing
+  week totals on the detail and overview screens.
+- Added ESPHome config inputs for Codex/Claude 5h start time. The display now
+  derives its current 5h bucket from weekly counters and local reset baselines.
+- Added MQTT discovery sensors for Codex/Claude `*_week` values and tombstoned
+  the old Codex/Claude `*_today` and rolling `*_5h` sensors.
+- Fixed the OpenRouter quadrant to show account balance remaining and remaining
+  percent instead of API-key limit remaining and key-limit usage percent.
+- Split the Codex and Claude detail rings into an upper 5h usage half and a
+  lower blue weekly usage half.
+- Tuned the round display spacing for WebUI, input/output labels, quadrant
+  center bars and the 5h + Week title.
+- Changed the lower quadrant center bars to show OpenRouter cost today and Open
+  WebUI output share instead of duplicating the quadrant arcs.
+- Added reset-time, last-updated/stale status, weekly pace, quadrant tap targets
+  and clearer Codex/Claude `/5h` max slider labels.
+- Added tap-to-return from provider detail screens back to the quadrant overview.
+- Renamed max sliders to sort together in ESPHome integrations.
+- Added VS Code `updated_at_epoch` publishing so the ESP display can detect
+  stale local collector data.
+
 ## 0.2.0 - 2026-05-17
 
 ### ESPHome Display

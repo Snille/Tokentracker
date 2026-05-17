@@ -12,11 +12,12 @@ inte kommer från VS Code-extensionen:
 
 Codex och Claude Code kommer från VS Code-extensionen via MQTT discovery:
 
-- `sensor.tokentracker_vs_code_codex_tokens_today`
-- `sensor.tokentracker_vs_code_claude_code_tokens_today`
+- `sensor.tokentracker_vs_code_codex_tokens_week`
+- `sensor.tokentracker_vs_code_claude_code_tokens_week`
+- `sensor.tokentracker_vs_code_updated_at_epoch`
 
 ESPHome-displayen använder sedan dessa råvärden och sina egna config-entities
-för maxvärden, tokens kvar och procent.
+för 5h-perioder, maxvärden, tokens kvar och procent.
 
 ## Installation
 
@@ -100,8 +101,8 @@ Displayens OpenRouter-detaljsida använder normalt:
 
 Quadrant/overview-ringarna använder normalt:
 
-- `sensor.openrouter_key_limit_remaining`
-- `sensor.openrouter_key_usage_percent`
+- `sensor.openrouter_balance_remaining`
+- `sensor.openrouter_usage_percent`
 
 OpenRouter `/activity` är historisk tokenstatistik för avslutade UTC-dagar, inte
 en live "idag"-räknare. Prompt/completion-värdena används därför som historik på
