@@ -1,6 +1,6 @@
 # Token Tracker
 
-![Token Tracker](.github/screenshot-2026-05-17.png)
+[![Token Tracker](.github/screenshot-2026-05-17.png)](https://youtu.be/VPfMYzIclb0)
 
 Project version: `0.4.0`
 
