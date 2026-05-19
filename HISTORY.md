@@ -1,5 +1,51 @@
 # History
 
+## 0.4.0 - 2026-05-19
+
+- Bumped ESPHome display to `1.11.0`.
+- Bumped VS Code extension to `1.3.1`.
+- VS Code extension: read the live `rate_limits` block out of Codex rollout
+  sessions (`~/.codex/sessions/**/*.jsonl`) and publish five new MQTT
+  discovery sensors:
+  - `codex_5h_used_percent`, `codex_5h_resets_at`
+  - `codex_weekly_used_percent`, `codex_weekly_resets_at`
+  - `codex_plan_type` (text sensor)
+- VS Code extension: skip `limit_id: "premium"` events where `primary` and
+  `secondary` are null so the percentage sensors do not get blanked at the end
+  of a Codex session.
+- VS Code extension: walk older rollouts when this week has no events yet so
+  the freshest rate-limit snapshot still reaches Home Assistant.
+- ESPHome: Codex 5h ring and weekly ring now read directly from
+  `codex_5h_used_percent` / `codex_weekly_used_percent`. Reset labels come from
+  the matching `*_resets_at` epochs instead of a synthetic
+  `goal × 33.6`-derived target.
+- ESPHome: Codex 5h baselines for the input/output/cache/reasoning breakdown
+  now re-anchor whenever `codex_5h_resets_at` changes, so the per-5h numbers
+  follow Codex's own sliding window. The old `Codex 5h Start Hour/Minute`
+  sliders and `codex_period_anchor_ts` / `codex_period_index` globals were
+  removed.
+- ESPHome: when `codex_5h_resets_at` (or `codex_weekly_resets_at`) is in the
+  past the corresponding ring is forced to 0%, so a long Codex pause no
+  longer leaves a stale percentage on the display.
+- ESPHome: VS Code stale badge renamed from `VS Code stale` to
+  `VS Code offline`. When the data is older than 10 minutes the "Upd …" label
+  switches to `Last HH:MM` showing the wall-clock time of the most recent
+  publish.
+- ESPHome: split-usage ring now takes `usage_5h_percent` and
+  `weekly_usage_percent` as direct arguments so callers can supply the real
+  Codex rate-limit values; Claude keeps its synthetic
+  `goal × 33.6` weekly calculation since Anthropic does not expose Pro/Max
+  rate limits publicly.
+- ESPHome: renamed `Max Codex / 5h` and `Max Claude / 5h` to
+  `Max Codex per 5h` and `Max Claude per 5h` to avoid the ESPHome 2026.7
+  warning about `/` in entity names.
+- ESPHome: nudged the upper Codex/Claude tiles on the quadrant overview
+  outwards (`cx=138` / `cx=328`) so the value text no longer overlaps the
+  `Wk` bars; Router/WebUI stay at the original `cx=148` / `cx=318`.
+- ESPHome: new `reset_label_from_epoch` helper formats an epoch as `HH:MM`
+  inside 24h and `Ddd HH:MM` further out, used for both the Codex 5h reset and
+  the future weekly reset label.
+
 ## 0.3.0 - 2026-05-17
 
 - Bumped ESPHome display to `1.10.0`.

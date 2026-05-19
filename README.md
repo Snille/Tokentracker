@@ -2,7 +2,7 @@
 
 ![Token Tracker](.github/screenshot-2026-05-17.png)
 
-Project version: `0.3.0`
+Project version: `0.4.0`
 
 Token Tracker is a personal AI-usage display for the Waveshare ESP32-S3 Touch
 AMOLED 1.75, Home Assistant and a small VS Code extension.
@@ -20,10 +20,10 @@ swap out the entity IDs, MQTT settings and API secrets.
 
 ## Versions
 
-- Project: `0.3.0` (`VERSION`)
-- ESPHome display: `1.10.0`
+- Project: `0.4.0` (`VERSION`)
+- ESPHome display: `1.11.0`
 - Home Assistant package: `1.2.1`
-- VS Code extension: `1.2.2`
+- VS Code extension: `1.3.1`
 
 See `HISTORY.md` for the change log.
 
@@ -45,17 +45,24 @@ device.
 
 The VS Code extension is intentionally "raw-only": for Codex and Claude Code it
 publishes weekly token values and subfields for input/output/cache/reasoning
-where the source provides them. The ESPHome display uses the weekly counters
-as a base and computes the configured 5h period itself.
-When a 5h start value is changed, the ESP saves the current weekly counter as
-the new baseline; from then on the periods continue every five hours across
-day boundaries.
+where the source provides them. For Codex it also forwards the live
+`rate_limits` block from the rollout sessions (`primary` = current 5h window
+percent + reset epoch, `secondary` = weekly window percent + reset epoch, plus
+`plan_type`). The ESPHome display uses Codex's real 5h/weekly percent and reset
+times directly on the Codex screen; Claude's session windows are not exposed by
+Anthropic so the ESP keeps deriving Claude's 5h from local baselines anchored
+to `Claude 5h Start Hour/Minute`.
+
+When the Codex `primary.resets_at` changes the ESP re-baselines the per-5h
+input/output/cached/reasoning breakdown so the token deltas match Codex's own
+sliding 5h window. Past `resets_at` epochs zero the corresponding ring so a
+long pause from Codex no longer leaves stale percentages on the display.
 `tokens left`, usage percent and max limits live in ESPHome/HA so they can be
 adjusted on the Token Tracker device.
 
 ## ESPHome display
 
-Current ESPHome version: `1.10.0`.
+Current ESPHome version: `1.11.0`.
 
 The display shows:
 
@@ -90,12 +97,18 @@ Visual rings:
 
 Important config entities on the ESPHome device:
 
-- `Max Codex / 5h` in ktokens.
-- `Max Claude / 5h` in ktokens.
-- Codex/Claude Max applies per configured 5h period.
+- `Max Codex per 5h` in ktokens. Used only as a local "what counts as 100%"
+  hint for parts of the UI; the real Codex 5h/weekly percentages now come from
+  the live Codex `rate_limits` sensors so this slider is mostly cosmetic for
+  Codex.
+- `Max Claude per 5h` in ktokens. Drives both the Claude 5h ring (`used / max`)
+  and the synthetic weekly ring (`week_total / (max × 33.6)`). Calibrate it
+  against what Claude Code reports in `Settings → Usage`; there is no public
+  Anthropic API for the real Pro/Max limits.
 - `Max WebUI` in ktokens.
-- `Codex 5h Start Hour` and `Codex 5h Start Minute`.
-- `Claude 5h Start Hour` and `Claude 5h Start Minute`.
+- `Claude 5h Start Hour` and `Claude 5h Start Minute` — anchors the Claude
+  5h baseline rollover. Codex no longer needs these sliders because it
+  re-baselines from `codex_5h_resets_at`.
 - `Display Brightness Percent`.
 - `Screen Interval` for the single screens.
 - `Overview Screen Interval` for the quadrant, I/O Mix and 5h + Week screens.

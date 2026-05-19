@@ -12,6 +12,11 @@ substitutions:
   openai_week_cached_input_tokens_entity: sensor.tokentracker_vs_code_codex_cached_input_tokens_week
   openai_week_output_tokens_entity: sensor.tokentracker_vs_code_codex_output_tokens_week
   openai_week_reasoning_output_tokens_entity: sensor.tokentracker_vs_code_codex_reasoning_output_tokens_week
+  codex_5h_used_percent_entity: sensor.tokentracker_vs_code_codex_5h_used_percent
+  codex_5h_resets_at_entity: sensor.tokentracker_vs_code_codex_5h_resets_at
+  codex_weekly_used_percent_entity: sensor.tokentracker_vs_code_codex_weekly_used_percent
+  codex_weekly_resets_at_entity: sensor.tokentracker_vs_code_codex_weekly_resets_at
+  codex_plan_type_entity: sensor.tokentracker_vs_code_codex_plan_type
   anthropic_week_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_week
   anthropic_week_input_tokens_entity: sensor.tokentracker_vs_code_claude_code_input_tokens_week
   anthropic_week_cache_creation_tokens_entity: sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_week
@@ -60,7 +65,7 @@ esphome:
     board_build.f_cpu: 240000000L
   project:
     name: snille.token-tracker
-    version: "1.10.0"
+    version: "1.11.0"
   on_boot:
     # Priority -100 = runs late, after hardware components have been set up.
     priority: -100
@@ -68,7 +73,7 @@ esphome:
       - logger.log:
           level: INFO
           tag: tokentracker
-          format: "TokenTracker ESPHome build 1.10.0: configurable Codex/Claude 5h windows"
+          format: "TokenTracker ESPHome build 1.11.0: real Codex rate limits + offline detection"
       - lambda: |-
           float brightness_percent = id(display_brightness_percent).state;
           if (isnan(brightness_percent)) brightness_percent = 70.0f;
@@ -232,30 +237,24 @@ globals:
     initial_value: "0"
   # 5h token-window tracking. Week counters come from the VS Code extension;
   # these baselines let the display derive the current configurable 5h bucket.
-  - id: codex_period_index
-    type: int
-    restore_value: true
-    initial_value: "-1"
   - id: claude_period_index
     type: int
     restore_value: true
     initial_value: "-1"
-  - id: codex_period_anchor_ts
-    type: int
-    restore_value: true
-    initial_value: "0"
   - id: claude_period_anchor_ts
     type: int
     restore_value: true
     initial_value: "0"
-  - id: codex_period_start_minutes
-    type: int
-    restore_value: true
-    initial_value: "-1"
   - id: claude_period_start_minutes
     type: int
     restore_value: true
     initial_value: "-1"
+  # Last seen Codex 5h reset epoch. Used to detect when the rate-limit window
+  # has rotated so the per-5h token breakdown baselines can be re-anchored.
+  - id: codex_period_resets_at
+    type: int
+    restore_value: true
+    initial_value: "0"
   - id: codex_period_total_baseline
     type: float
     restore_value: true
@@ -419,6 +418,18 @@ sensor:
     id: openai_reasoning_output_tokens_week
     entity_id: ${openai_week_reasoning_output_tokens_entity}
   - platform: homeassistant
+    id: codex_5h_used_percent
+    entity_id: ${codex_5h_used_percent_entity}
+  - platform: homeassistant
+    id: codex_5h_resets_at
+    entity_id: ${codex_5h_resets_at_entity}
+  - platform: homeassistant
+    id: codex_weekly_used_percent
+    entity_id: ${codex_weekly_used_percent_entity}
+  - platform: homeassistant
+    id: codex_weekly_resets_at
+    entity_id: ${codex_weekly_resets_at_entity}
+  - platform: homeassistant
     id: anthropic_tokens_week
     entity_id: ${anthropic_week_tokens_entity}
   - platform: homeassistant
@@ -558,6 +569,9 @@ text_sensor:
   - platform: homeassistant
     id: openwebui_top_model
     entity_id: ${openwebui_top_model_entity}
+  - platform: homeassistant
+    id: codex_plan_type
+    entity_id: ${codex_plan_type_entity}
 
 # User-tunable number entities controlling auto-rotate cadence.
 number:
@@ -611,7 +625,7 @@ number:
 
   - platform: template
     id: codex_daily_token_goal
-    name: Max Codex / 5h
+    name: Max Codex per 5h
     icon: mdi:target
     entity_category: config
     optimistic: true
@@ -625,7 +639,7 @@ number:
 
   - platform: template
     id: claude_daily_token_goal
-    name: Max Claude / 5h
+    name: Max Claude per 5h
     icon: mdi:target
     entity_category: config
     optimistic: true
@@ -636,34 +650,6 @@ number:
     mode: slider
     initial_value: 50000
     unit_of_measurement: ktokens
-
-  - platform: template
-    id: codex_5h_start_hour
-    name: Codex 5h Start Hour
-    icon: mdi:clock-start
-    entity_category: config
-    optimistic: true
-    restore_value: true
-    min_value: 0
-    max_value: 24
-    step: 1
-    mode: slider
-    initial_value: 0
-    unit_of_measurement: h
-
-  - platform: template
-    id: codex_5h_start_minute
-    name: Codex 5h Start Minute
-    icon: mdi:clock-start
-    entity_category: config
-    optimistic: true
-    restore_value: true
-    min_value: 0
-    max_value: 59
-    step: 1
-    mode: slider
-    initial_value: 0
-    unit_of_measurement: min
 
   - platform: template
     id: claude_5h_start_hour
@@ -1097,22 +1083,20 @@ interval:
             return (int) (period_start / 60LL);
           };
 
-          if (!isnan(id(openai_tokens_week).state)) {
-            const int codex_start_minutes = configured_start_minutes(id(codex_5h_start_hour).state, id(codex_5h_start_minute).state);
-            if (id(codex_period_anchor_ts) <= 0 || id(codex_period_start_minutes) != codex_start_minutes) {
-              id(codex_period_anchor_ts) = reset_anchor(codex_start_minutes);
-              id(codex_period_start_minutes) = codex_start_minutes;
-              id(codex_period_index) = -1;
-            }
-            const int codex_index = current_period_index(id(codex_period_anchor_ts));
-            if (id(codex_period_index) != codex_index || safe_value(id(openai_tokens_week).state) < id(codex_period_total_baseline)) {
-              id(codex_period_index) = codex_index;
+          // Codex 5h baselines roll over whenever Codex itself reports a new
+          // primary.resets_at epoch (i.e. a fresh 5h window opened).
+          if (!isnan(id(openai_tokens_week).state) && !isnan(id(codex_5h_resets_at).state)) {
+            const int codex_resets_at = (int) id(codex_5h_resets_at).state;
+            if (codex_resets_at > 0 &&
+                (codex_resets_at != id(codex_period_resets_at) ||
+                 safe_value(id(openai_tokens_week).state) < id(codex_period_total_baseline))) {
+              id(codex_period_resets_at) = codex_resets_at;
               id(codex_period_total_baseline) = safe_value(id(openai_tokens_week).state);
               id(codex_period_input_baseline) = safe_value(id(openai_input_tokens_week).state);
               id(codex_period_cached_baseline) = safe_value(id(openai_cached_input_tokens_week).state);
               id(codex_period_output_baseline) = safe_value(id(openai_output_tokens_week).state);
               id(codex_period_reasoning_baseline) = safe_value(id(openai_reasoning_output_tokens_week).state);
-              ESP_LOGI("tokentracker", "Codex 5h period reset at index %d", codex_index);
+              ESP_LOGI("tokentracker", "Codex 5h period reset, next reset epoch %d", codex_resets_at);
             }
           }
 
@@ -1368,6 +1352,34 @@ display:
         return std::string(buffer);
       };
 
+      // True when an epoch timestamp lies in the past (or is missing), meaning
+      // the value tied to that reset window is stale and should be treated as 0.
+      auto epoch_expired = [&](float epoch) -> bool {
+        if (isnan(epoch) || epoch <= 0.0f) return true;
+        auto now = id(home_assistant_time).now();
+        if (!now.is_valid()) return false;
+        return (long) epoch <= (long) now.timestamp;
+      };
+
+      // Format an epoch timestamp as "HH:MM" if it falls within the next 24h,
+      // otherwise "Ddd HH:MM" so weekly resets show which day they land on.
+      auto reset_label_from_epoch = [&](float epoch) -> std::string {
+        if (isnan(epoch) || epoch <= 0.0f) return "--:--";
+        auto target = ESPTime::from_epoch_local((time_t) epoch);
+        auto now = id(home_assistant_time).now();
+        char buffer[16];
+        long delta = now.is_valid() ? ((long) epoch - (long) now.timestamp) : 0;
+        if (delta < 86400 && delta > -3600) {
+          snprintf(buffer, sizeof(buffer), "%02d:%02d", target.hour, target.minute);
+        } else {
+          static const char *kDays[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+          int dow = target.day_of_week - 1;
+          if (dow < 0 || dow > 6) dow = 0;
+          snprintf(buffer, sizeof(buffer), "%s %02d:%02d", kDays[dow], target.hour, target.minute);
+        }
+        return std::string(buffer);
+      };
+
       auto vscode_data_age_seconds = [&]() -> int {
         auto now = id(home_assistant_time).now();
         float updated = id(vscode_updated_at_epoch).state;
@@ -1378,6 +1390,13 @@ display:
       auto vscode_data_age_label = [&]() -> std::string {
         int age = vscode_data_age_seconds();
         if (age < 0) return "Upd --";
+        if (age > 600) {
+          float updated = id(vscode_updated_at_epoch).state;
+          auto last_seen = ESPTime::from_epoch_local((time_t) updated);
+          char buffer[16];
+          snprintf(buffer, sizeof(buffer), "Last %02d:%02d", last_seen.hour, last_seen.minute);
+          return std::string(buffer);
+        }
         if (age < 60) return "Upd now";
         char buffer[16];
         if (age < 3600) {
@@ -1707,7 +1726,7 @@ display:
 
       auto draw_stale_badge = [&]() {
         if (!vscode_data_stale()) return;
-        printf_r(233, 394, id(font_tiny), red, TextAlign::CENTER, "VS Code stale");
+        printf_r(233, 394, id(font_tiny), red, TextAlign::CENTER, "VS Code offline");
       };
 
       auto draw_provider_shell = [&](const char *name, esphome::image::Image *logo, float usage_percent, Color accent) {
@@ -1740,9 +1759,9 @@ display:
         printf_r(233, 120, id(font_small_value), white, TextAlign::CENTER, "%s", name);
       };
 
-      auto draw_token_detail_account = [&](const char *name, esphome::image::Image *logo, float total, float input, float output, float cached, float reasoning, float week_total, float goal, const char *reset_label, Color accent) {
-        float pct = usage_from_goal(total, goal);
-        float week_pct = usage_from_goal(week_total, weekly_goal_from_5h_goal(goal));
+      auto draw_token_detail_account = [&](const char *name, esphome::image::Image *logo, float total, float input, float output, float cached, float reasoning, float week_total, float usage_5h_percent, float weekly_usage_percent, const char *reset_label, Color accent) {
+        float pct = isnan(usage_5h_percent) ? 0.0f : usage_5h_percent;
+        float week_pct = isnan(weekly_usage_percent) ? 0.0f : weekly_usage_percent;
         draw_token_provider_shell(name, logo, pct, week_pct, accent);
         printf_r(233, 150, id(font_tiny), muted, TextAlign::CENTER, "Tokens / 5h");
         printf_r(233, 184, id(font_title), accent, TextAlign::CENTER, "%s", tokens(total).c_str());
@@ -1860,7 +1879,9 @@ display:
       // Screen 1: Codex (OpenAI) tokens, green accent.
       if (id(current_screen) == 1) {
         float codex_used = codex_5h_total();
-        float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
+        float codex_5h_pct = epoch_expired(id(codex_5h_resets_at).state) ? 0.0f : id(codex_5h_used_percent).state;
+        float codex_wk_pct = epoch_expired(id(codex_weekly_resets_at).state) ? 0.0f : id(codex_weekly_used_percent).state;
+        std::string codex_reset = reset_label_from_epoch(id(codex_5h_resets_at).state);
         draw_token_detail_account(
           "Codex",
           id(img_openai_small),
@@ -1870,8 +1891,9 @@ display:
           codex_5h_cached(),
           codex_5h_reasoning(),
           id(openai_tokens_week).state,
-          codex_goal,
-          period_reset_label(id(codex_period_index)).c_str(),
+          codex_5h_pct,
+          codex_wk_pct,
+          codex_reset.c_str(),
           green);
         draw_footer(1, green);
         return;
@@ -1889,7 +1911,8 @@ display:
           claude_5h_cache_read() + claude_5h_cache_creation(),
           0.0f,
           id(anthropic_tokens_week).state,
-          claude_goal,
+          usage_from_goal(claude_used, claude_goal),
+          usage_from_goal(id(anthropic_tokens_week).state, weekly_goal_from_5h_goal(claude_goal)),
           period_reset_label(id(claude_period_index)).c_str(),
           amber);
         draw_footer(2, amber);
@@ -1910,8 +1933,8 @@ display:
       // Screen 5: Overview - four account arcs + four small tiles + center clock.
       float codex_used = codex_5h_total();
       float codex_goal = ktokens_to_tokens(id(codex_daily_token_goal).state);
-      float codex_pct = usage_from_goal(codex_used, codex_goal);
-      float codex_week_pct = usage_from_goal(id(openai_tokens_week).state, weekly_goal_from_5h_goal(codex_goal));
+      float codex_pct = epoch_expired(id(codex_5h_resets_at).state) ? 0.0f : safe_value(id(codex_5h_used_percent).state);
+      float codex_week_pct = epoch_expired(id(codex_weekly_resets_at).state) ? 0.0f : safe_value(id(codex_weekly_used_percent).state);
       float claude_used = claude_5h_total();
       float claude_goal = ktokens_to_tokens(id(claude_daily_token_goal).state);
       float claude_pct = usage_from_goal(claude_used, claude_goal);
@@ -1944,8 +1967,8 @@ display:
         printf_r(258, 76, id(font_tiny), blue, TextAlign::CENTER, "Wk");
         printf_r(208, 396, id(font_tiny), blue, TextAlign::CENTER, "$");
         printf_r(258, 396, id(font_tiny), red, TextAlign::CENTER, "Out");
-        draw_overview_tile(148, 135, "Codex", id(img_openai_small), tokens(codex_used).c_str(), codex_pct, green);
-        draw_overview_tile(318, 135, "Claude", id(img_anthropic_small), tokens(claude_used).c_str(), claude_pct, amber);
+        draw_overview_tile(138, 135, "Codex", id(img_openai_small), tokens(codex_used).c_str(), codex_pct, green);
+        draw_overview_tile(328, 135, "Claude", id(img_anthropic_small), tokens(claude_used).c_str(), claude_pct, amber);
         draw_overview_tile(148, 313, "Router", id(img_openrouter_small), money(id(openrouter_balance_remaining).state).c_str(), router_remaining_pct, blue);
         draw_overview_tile(318, 313, "WebUI", id(img_openwebui_small), tokens(owui_used).c_str(), owui_pct, red);
         draw_footer(5, white);

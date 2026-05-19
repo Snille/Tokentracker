@@ -32,7 +32,7 @@ interface SensorConfig {
 interface UsagePayload {
   updated_at: string;
   updated_at_epoch: number;
-  [key: string]: string | number | boolean;
+  [key: string]: string | number | boolean | null;
 }
 
 interface CodexUsage {
@@ -41,6 +41,24 @@ interface CodexUsage {
   codex_cached_input_tokens_week: number;
   codex_output_tokens_week: number;
   codex_reasoning_output_tokens_week: number;
+  codex_5h_used_percent: number;
+  codex_5h_resets_at: number;
+  codex_weekly_used_percent: number;
+  codex_weekly_resets_at: number;
+  codex_plan_type: string;
+}
+
+interface CodexRateLimitWindow {
+  used_percent?: number;
+  window_minutes?: number;
+  resets_at?: number;
+}
+
+interface CodexRateLimits {
+  primary?: CodexRateLimitWindow | null;
+  secondary?: CodexRateLimitWindow | null;
+  plan_type?: string | null;
+  rate_limit_reached_type?: string | null;
 }
 
 interface ClaudeUsage {
@@ -200,13 +218,7 @@ async function publishCycle() {
       Object.assign(payload, codexUsage);
     } catch (error) {
       console.error("TokenTracker Codex read failed", error);
-      Object.assign(payload, {
-        codex_tokens_week: 0,
-        codex_input_tokens_week: 0,
-        codex_cached_input_tokens_week: 0,
-        codex_output_tokens_week: 0,
-        codex_reasoning_output_tokens_week: 0,
-      });
+      Object.assign(payload, emptyCodexUsage());
     }
   }
   if (settings.claudeEnabled) {
@@ -238,6 +250,11 @@ async function publishDiscovery(settings: MqttSettings) {
     { id: "codex_cached_input_tokens_week", name: "Codex Cached Input Tokens Week", unit: "tokens", icon: "mdi:cached" },
     { id: "codex_output_tokens_week", name: "Codex Output Tokens Week", unit: "tokens", icon: "mdi:arrow-up-bold-circle-outline" },
     { id: "codex_reasoning_output_tokens_week", name: "Codex Reasoning Output Tokens Week", unit: "tokens", icon: "mdi:head-cog-outline" },
+    { id: "codex_5h_used_percent", name: "Codex 5h Used Percent", unit: "%", icon: "mdi:gauge" },
+    { id: "codex_5h_resets_at", name: "Codex 5h Resets At", unit: "s", icon: "mdi:timer-sand" },
+    { id: "codex_weekly_used_percent", name: "Codex Weekly Used Percent", unit: "%", icon: "mdi:gauge-full" },
+    { id: "codex_weekly_resets_at", name: "Codex Weekly Resets At", unit: "s", icon: "mdi:calendar-refresh-outline" },
+    { id: "codex_plan_type", name: "Codex Plan Type", icon: "mdi:card-account-details-outline" },
     { id: "claude_tokens_week", name: "Claude Code Tokens Week", unit: "tokens", icon: "mdi:calendar-week" },
     { id: "claude_input_tokens_week", name: "Claude Code Input Tokens Week", unit: "tokens", icon: "mdi:arrow-down-bold-circle-outline" },
     { id: "claude_cache_creation_input_tokens_week", name: "Claude Code Cache Creation Tokens Week", unit: "tokens", icon: "mdi:database-plus-outline" },
@@ -281,7 +298,7 @@ async function readCodexUsage(): Promise<CodexUsage> {
 
   const dbPath = path.join(os.homedir(), ".codex", "state_5.sqlite");
   if (!fs.existsSync(dbPath)) {
-    return emptyCodexUsage();
+    return sessionUsage;
   }
 
   const rows = await sqliteAll<{
@@ -295,7 +312,7 @@ async function readCodexUsage(): Promise<CodexUsage> {
   const tokensWeek = rows.reduce((sum, row) => sum + (row.tokens_used || 0), 0);
 
   return {
-    ...emptyCodexUsage(),
+    ...sessionUsage,
     codex_tokens_week: tokensWeek,
   };
 }
@@ -305,6 +322,7 @@ async function readCodexSessionUsage(windows: UsageWindows): Promise<CodexUsage>
   const buckets: CodexUsageBuckets = {
     week: {},
   };
+  let latestRateLimits: { rateLimits: CodexRateLimits; timestampMs: number } | undefined;
 
   if (!fs.existsSync(sessionsPath)) {
     return emptyCodexUsage();
@@ -314,10 +332,19 @@ async function readCodexSessionUsage(windows: UsageWindows): Promise<CodexUsage>
     if (!path.basename(filePath).startsWith("rollout-")) continue;
 
     const stat = fs.statSync(filePath);
-    if (stat.mtimeMs < windows.weekStartMs) continue;
-
-    const fileBuckets = await readCodexTokenUsageBuckets(filePath, windows, stat.mtimeMs);
-    addCodexUsage(buckets.week, fileBuckets.week);
+    if (stat.mtimeMs >= windows.weekStartMs) {
+      const fileBuckets = await readCodexTokenUsageBuckets(filePath, windows, stat.mtimeMs);
+      addCodexUsage(buckets.week, fileBuckets.week);
+      if (fileBuckets.latestRateLimits && (!latestRateLimits || fileBuckets.latestRateLimits.timestampMs > latestRateLimits.timestampMs)) {
+        latestRateLimits = fileBuckets.latestRateLimits;
+      }
+    } else if (!latestRateLimits || stat.mtimeMs > latestRateLimits.timestampMs) {
+      // File is older than this week, but may still hold the freshest rate-limit snapshot we have.
+      const rateLimitsOnly = await readCodexRateLimitsOnly(filePath, stat.mtimeMs);
+      if (rateLimitsOnly && (!latestRateLimits || rateLimitsOnly.timestampMs > latestRateLimits.timestampMs)) {
+        latestRateLimits = rateLimitsOnly;
+      }
+    }
   }
 
   return {
@@ -326,11 +353,16 @@ async function readCodexSessionUsage(windows: UsageWindows): Promise<CodexUsage>
     codex_cached_input_tokens_week: numeric(buckets.week.cached_input_tokens),
     codex_output_tokens_week: numeric(buckets.week.output_tokens),
     codex_reasoning_output_tokens_week: numeric(buckets.week.reasoning_output_tokens),
+    ...rateLimitsToPayload(latestRateLimits?.rateLimits),
   };
 }
 
-async function readCodexTokenUsageBuckets(filePath: string, windows: UsageWindows, fallbackTimestampMs: number): Promise<CodexUsageBuckets> {
-  const buckets: CodexUsageBuckets = {
+interface CodexUsageBucketsWithLimits extends CodexUsageBuckets {
+  latestRateLimits?: { rateLimits: CodexRateLimits; timestampMs: number };
+}
+
+async function readCodexTokenUsageBuckets(filePath: string, windows: UsageWindows, fallbackTimestampMs: number): Promise<CodexUsageBucketsWithLimits> {
+  const buckets: CodexUsageBucketsWithLimits = {
     week: {},
   };
   let previousUsage: CodexTokenUsage | undefined;
@@ -344,9 +376,13 @@ async function readCodexTokenUsageBuckets(filePath: string, windows: UsageWindow
     try {
       const event = JSON.parse(line);
       if (event?.payload?.type !== "token_count") continue;
+      const eventTimestampMs = timestampMs(event) ?? fallbackTimestampMs;
+      const rateLimits = event.payload.rate_limits as CodexRateLimits | undefined;
+      if (hasUsableRateLimits(rateLimits) && (!buckets.latestRateLimits || eventTimestampMs >= buckets.latestRateLimits.timestampMs)) {
+        buckets.latestRateLimits = { rateLimits: rateLimits as CodexRateLimits, timestampMs: eventTimestampMs };
+      }
       const currentUsage = event.payload.info?.total_token_usage;
       if (!currentUsage) continue;
-      const eventTimestampMs = timestampMs(event) ?? fallbackTimestampMs;
       const delta = codexUsageDelta(currentUsage, previousUsage);
       previousUsage = currentUsage;
       if (eventTimestampMs >= windows.weekStartMs) addCodexUsage(buckets.week, delta);
@@ -356,6 +392,48 @@ async function readCodexTokenUsageBuckets(filePath: string, windows: UsageWindow
   }
 
   return buckets;
+}
+
+async function readCodexRateLimitsOnly(filePath: string, fallbackTimestampMs: number): Promise<{ rateLimits: CodexRateLimits; timestampMs: number } | undefined> {
+  let latest: { rateLimits: CodexRateLimits; timestampMs: number } | undefined;
+  const reader = readline.createInterface({
+    input: fs.createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of reader) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line);
+      if (event?.payload?.type !== "token_count") continue;
+      const rateLimits = event.payload.rate_limits as CodexRateLimits | undefined;
+      if (!hasUsableRateLimits(rateLimits)) continue;
+      const eventTimestampMs = timestampMs(event) ?? fallbackTimestampMs;
+      if (!latest || eventTimestampMs >= latest.timestampMs) {
+        latest = { rateLimits: rateLimits as CodexRateLimits, timestampMs: eventTimestampMs };
+      }
+    } catch {
+      // Ignore partial/corrupt log lines.
+    }
+  }
+  return latest;
+}
+
+function hasUsableRateLimits(rateLimits: CodexRateLimits | undefined): boolean {
+  // Codex emits "premium" rate_limits events alongside the regular "codex" ones,
+  // where both primary and secondary are null. Skip those so we don't blank the
+  // real token-window numbers.
+  if (!rateLimits) return false;
+  return Boolean(rateLimits.primary) || Boolean(rateLimits.secondary);
+}
+
+function rateLimitsToPayload(rateLimits: CodexRateLimits | undefined) {
+  return {
+    codex_5h_used_percent: numeric(rateLimits?.primary?.used_percent),
+    codex_5h_resets_at: numeric(rateLimits?.primary?.resets_at),
+    codex_weekly_used_percent: numeric(rateLimits?.secondary?.used_percent),
+    codex_weekly_resets_at: numeric(rateLimits?.secondary?.resets_at),
+    codex_plan_type: typeof rateLimits?.plan_type === "string" ? rateLimits.plan_type : "",
+  };
 }
 
 async function readClaudeUsage(): Promise<ClaudeUsage> {
@@ -441,6 +519,11 @@ function emptyCodexUsage(): CodexUsage {
     codex_cached_input_tokens_week: 0,
     codex_output_tokens_week: 0,
     codex_reasoning_output_tokens_week: 0,
+    codex_5h_used_percent: 0,
+    codex_5h_resets_at: 0,
+    codex_weekly_used_percent: 0,
+    codex_weekly_resets_at: 0,
+    codex_plan_type: "",
   };
 }
 

@@ -135,7 +135,7 @@ npm run package
 That produces a VSIX, for example:
 
 ```text
-tokentracker-vscode-1.2.2.vsix
+tokentracker-vscode-1.3.1.vsix
 ```
 
 Install it in VS Code:
@@ -169,6 +169,11 @@ such as:
 
 ```text
 sensor.tokentracker_vs_code_codex_tokens_week
+sensor.tokentracker_vs_code_codex_5h_used_percent
+sensor.tokentracker_vs_code_codex_5h_resets_at
+sensor.tokentracker_vs_code_codex_weekly_used_percent
+sensor.tokentracker_vs_code_codex_weekly_resets_at
+sensor.tokentracker_vs_code_codex_plan_type
 sensor.tokentracker_vs_code_claude_code_tokens_week
 sensor.tokentracker_vs_code_updated_at_epoch
 ```
@@ -178,8 +183,10 @@ The extension reads local files:
 - Codex: `~/.codex/sessions/**/*.jsonl`, falling back to `~/.codex/state_5.sqlite`.
 - Claude Code: `~/.claude/projects/**/*.jsonl`.
 
-It publishes weekly counters. The ESP computes the current 5h period itself
-using its own baselines.
+It publishes weekly counters plus Codex's live `rate_limits` snapshot (current
+5h percent + reset epoch and weekly percent + reset epoch). Claude has no
+equivalent public source so the ESP keeps deriving Claude's 5h window from
+local baselines and the `Claude 5h Start Hour/Minute` sliders.
 
 ## 5. Prepare ESPHome secrets
 
@@ -251,11 +258,11 @@ is already cached.
 When the ESP connects, Token Tracker appears as an ESPHome device in Home
 Assistant. Configure the most important config entities:
 
-- `Max Codex / 5h`
-- `Max Claude / 5h`
+- `Max Codex per 5h` (mostly cosmetic for Codex now; real percentages come
+  from Codex `rate_limits`)
+- `Max Claude per 5h` (drives both the Claude 5h ring and the synthetic weekly
+  ring `week / (max × 33.6)`; calibrate against Claude Code `Settings → Usage`)
 - `Max WebUI`
-- `Codex 5h Start Hour`
-- `Codex 5h Start Minute`
 - `Claude 5h Start Hour`
 - `Claude 5h Start Minute`
 - `Display Brightness Percent`
@@ -265,13 +272,14 @@ Assistant. Configure the most important config entities:
 - `Show Clock`, `Show Codex`, `Show Claude Code`, `Show OpenRouter`,
   `Show Open WebUI`, `Show Overview`
 
-Codex/Claude max values are in ktokens per 5h period.
+`Claude 5h Start Hour` is `0-24`. `0` means `00:00`, and `24` is treated as
+`00:00`. Minute is `0-59`. Set this to roughly when your Claude session
+typically starts; the ESP rebases the Claude 5h breakdown every time the
+period crosses that anchor.
 
-`Codex/Claude 5h Start Hour` is `0-24`. `0` means `00:00`, and `24` is treated
-as `00:00`. Minute is `0-59`.
-
-When you change a 5h start time, the ESP saves the current weekly counter as
-its baseline. After that it keeps counting periods every five hours.
+Codex's 5h breakdown re-baselines automatically when Codex itself reports a
+new `primary.resets_at` in its session logs, so there are no Codex 5h start
+sliders.
 
 ## 9. Check that everything works
 
@@ -283,6 +291,11 @@ sensor.tokentracker_vs_code_codex_input_tokens_week
 sensor.tokentracker_vs_code_codex_cached_input_tokens_week
 sensor.tokentracker_vs_code_codex_output_tokens_week
 sensor.tokentracker_vs_code_codex_reasoning_output_tokens_week
+sensor.tokentracker_vs_code_codex_5h_used_percent
+sensor.tokentracker_vs_code_codex_5h_resets_at
+sensor.tokentracker_vs_code_codex_weekly_used_percent
+sensor.tokentracker_vs_code_codex_weekly_resets_at
+sensor.tokentracker_vs_code_codex_plan_type
 sensor.tokentracker_vs_code_claude_code_tokens_week
 sensor.tokentracker_vs_code_claude_code_input_tokens_week
 sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_week
@@ -333,11 +346,14 @@ On the display:
 - Check that the MQTT integration in HA is active.
 - Remember that the extension only runs while VS Code is running.
 
-### The ESP shows `VS Code stale`
+### The ESP shows `VS Code offline`
 
-- The VS Code extension is no longer publishing, or VS Code is closed.
+- The VS Code extension has not published in more than 10 minutes.
+- VS Code is closed, the extension is disabled, or MQTT lost connection.
 - Check `sensor.tokentracker_vs_code_updated_at_epoch`.
 - Run `TokenTracker: Publish Now`.
+- While offline the ESP keeps showing the last known values and a `Last HH:MM`
+  timestamp instead of a relative "Upd X min" age.
 
 ### ESPHome build fails
 
