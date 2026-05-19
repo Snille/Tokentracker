@@ -125,8 +125,8 @@ entity IDs and slider max values. Example:
 openai_week_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_week
 anthropic_week_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_week
 openwebui_tokens_entity: sensor.openwebui_tokens_today
-codex_max_ktokens: "250000"
-claude_max_ktokens: "250000"
+codex_max_ktokens: "11400"
+claude_max_ktokens: "50000"
 openwebui_max_ktokens: "1250"
 ```
 

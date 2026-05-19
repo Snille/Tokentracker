@@ -49,8 +49,8 @@ substitutions:
   # Maximum values for the HA config sliders below, expressed in ktokens
   # (1 ktoken = 1000 tokens). These only control how far the sliders can be
   # dragged; the current limit values are stored/restored by the number entities.
-  codex_max_ktokens: "250000"
-  claude_max_ktokens: "250000"
+  codex_max_ktokens: "11400"
+  claude_max_ktokens: "50000"
   openwebui_max_ktokens: "1250"
 
 # Core ESPHome device configuration. Includes PlatformIO build flags for the
