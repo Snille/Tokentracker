@@ -49,23 +49,28 @@ LEGACY_SENSOR_IDS = [
     "claude_output_tokens_5h",
 ]
 
+# `id` is the key in the published JSON state payload (value_template source).
+# `object_id` is the Home Assistant entity object_id and MUST match the names
+# the original VS Code extension used, because the ESPHome display
+# (storstugan-office-token-tracker-128) and existing HA dashboards read those
+# `sensor.tokentracker_vs_code_*` entities. Keep the two columns in sync.
 SENSORS = [
-    {"id": "updated_at_epoch", "name": "Updated At Epoch", "unit": "s", "icon": "mdi:clock-check-outline"},
-    {"id": "codex_tokens_week", "name": "Codex Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
-    {"id": "codex_input_tokens_week", "name": "Codex Input Tokens Week", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
-    {"id": "codex_cached_input_tokens_week", "name": "Codex Cached Input Tokens Week", "unit": "tokens", "icon": "mdi:cached"},
-    {"id": "codex_output_tokens_week", "name": "Codex Output Tokens Week", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
-    {"id": "codex_reasoning_output_tokens_week", "name": "Codex Reasoning Output Tokens Week", "unit": "tokens", "icon": "mdi:head-cog-outline"},
-    {"id": "codex_5h_used_percent", "name": "Codex 5h Used Percent", "unit": "%", "icon": "mdi:gauge"},
-    {"id": "codex_5h_resets_at", "name": "Codex 5h Resets At", "unit": "s", "icon": "mdi:timer-sand"},
-    {"id": "codex_weekly_used_percent", "name": "Codex Weekly Used Percent", "unit": "%", "icon": "mdi:gauge-full"},
-    {"id": "codex_weekly_resets_at", "name": "Codex Weekly Resets At", "unit": "s", "icon": "mdi:calendar-refresh-outline"},
-    {"id": "codex_plan_type", "name": "Codex Plan Type", "icon": "mdi:card-account-details-outline"},
-    {"id": "claude_tokens_week", "name": "Claude Code Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
-    {"id": "claude_input_tokens_week", "name": "Claude Code Input Tokens Week", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
-    {"id": "claude_cache_creation_input_tokens_week", "name": "Claude Code Cache Creation Tokens Week", "unit": "tokens", "icon": "mdi:database-plus-outline"},
-    {"id": "claude_cache_read_input_tokens_week", "name": "Claude Code Cache Read Tokens Week", "unit": "tokens", "icon": "mdi:database-eye-outline"},
-    {"id": "claude_output_tokens_week", "name": "Claude Code Output Tokens Week", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
+    {"id": "updated_at_epoch", "object_id": "tokentracker_vs_code_updated_at_epoch", "name": "Updated At Epoch", "unit": "s", "icon": "mdi:clock-check-outline"},
+    {"id": "codex_tokens_week", "object_id": "tokentracker_vs_code_codex_tokens_week", "name": "Codex Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
+    {"id": "codex_input_tokens_week", "object_id": "tokentracker_vs_code_codex_input_tokens_week", "name": "Codex Input Tokens Week", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
+    {"id": "codex_cached_input_tokens_week", "object_id": "tokentracker_vs_code_codex_cached_input_tokens_week", "name": "Codex Cached Input Tokens Week", "unit": "tokens", "icon": "mdi:cached"},
+    {"id": "codex_output_tokens_week", "object_id": "tokentracker_vs_code_codex_output_tokens_week", "name": "Codex Output Tokens Week", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
+    {"id": "codex_reasoning_output_tokens_week", "object_id": "tokentracker_vs_code_codex_reasoning_output_tokens_week", "name": "Codex Reasoning Output Tokens Week", "unit": "tokens", "icon": "mdi:head-cog-outline"},
+    {"id": "codex_5h_used_percent", "object_id": "tokentracker_vs_code_codex_5h_used_percent", "name": "Codex 5h Used Percent", "unit": "%", "icon": "mdi:gauge"},
+    {"id": "codex_5h_resets_at", "object_id": "tokentracker_vs_code_codex_5h_resets_at", "name": "Codex 5h Resets At", "unit": "s", "icon": "mdi:timer-sand"},
+    {"id": "codex_weekly_used_percent", "object_id": "tokentracker_vs_code_codex_weekly_used_percent", "name": "Codex Weekly Used Percent", "unit": "%", "icon": "mdi:gauge-full"},
+    {"id": "codex_weekly_resets_at", "object_id": "tokentracker_vs_code_codex_weekly_resets_at", "name": "Codex Weekly Resets At", "unit": "s", "icon": "mdi:calendar-refresh-outline"},
+    {"id": "codex_plan_type", "object_id": "tokentracker_vs_code_codex_plan_type", "name": "Codex Plan Type", "icon": "mdi:card-account-details-outline"},
+    {"id": "claude_tokens_week", "object_id": "tokentracker_vs_code_claude_code_tokens_week", "name": "Claude Code Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
+    {"id": "claude_input_tokens_week", "object_id": "tokentracker_vs_code_claude_code_input_tokens_week", "name": "Claude Code Input Tokens Week", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
+    {"id": "claude_cache_creation_input_tokens_week", "object_id": "tokentracker_vs_code_claude_code_cache_creation_tokens_week", "name": "Claude Code Cache Creation Tokens Week", "unit": "tokens", "icon": "mdi:database-plus-outline"},
+    {"id": "claude_cache_read_input_tokens_week", "object_id": "tokentracker_vs_code_claude_code_cache_read_tokens_week", "name": "Claude Code Cache Read Tokens Week", "unit": "tokens", "icon": "mdi:database-eye-outline"},
+    {"id": "claude_output_tokens_week", "object_id": "tokentracker_vs_code_claude_code_output_tokens_week", "name": "Claude Code Output Tokens Week", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
 ]
 
 
@@ -364,7 +369,7 @@ def build_payload(config: dict) -> dict:
 
 
 def discovery_payload(sensor: dict, state_topic: str) -> dict:
-    object_id = f"tokentracker_{sensor['id']}"
+    object_id = sensor["object_id"]
     return {
         "name": sensor["name"],
         "unique_id": object_id,
@@ -399,7 +404,7 @@ def main() -> None:
     client.loop_start()
     try:
         for sensor in SENSORS:
-            topic = f"{discovery_prefix}/sensor/tokentracker_{sensor['id']}/config"
+            topic = f"{discovery_prefix}/sensor/{sensor['object_id']}/config"
             client.publish(topic, json.dumps(discovery_payload(sensor, state_topic)), qos=0, retain=True)
         client.publish(state_topic, json.dumps(payload), qos=0, retain=True)
         time.sleep(1.5)  # let the loop thread flush publishes before disconnecting

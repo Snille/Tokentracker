@@ -1,6 +1,6 @@
 # TokenTracker Python Collector
 
-Version: 1.0.0
+Version: 1.0.1
 
 Standalone alternative to `vscode-extension/`. Publishes the same local Codex
 and Claude Code weekly token counters to Home Assistant via MQTT discovery,

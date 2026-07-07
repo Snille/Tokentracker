@@ -1,5 +1,21 @@
 # History
 
+## 0.5.1 - 2026-07-07
+
+- Fixed `python-collector/` (version `1.0.1`): it did **not** actually publish
+  the same Home Assistant entity IDs as the VS Code extension, despite the
+  0.5.0 note claiming so. It built object_ids as `tokentracker_<id>`, missing
+  the `vs_code` infix and using `claude_*` instead of `claude_code_*` (and
+  keeping `input` in the cache sensor names). As a result the ESPHome display
+  (`sensor.tokentracker_vs_code_*`) and existing HA dashboards saw no data
+  after switching from the extension to the Python collector.
+- Each `SENSORS` entry now carries an explicit `object_id` matching the VS
+  Code extension's exact entity names; `discovery_payload` and the discovery
+  config topic use it. The JSON state payload keys (`id`) are unchanged, so
+  `value_template` still resolves. The 16 old, wrongly-named discovery configs
+  must be cleared with empty retained payloads when upgrading (done on the
+  affected host).
+
 ## 0.5.0 - 2026-07-07
 
 - Added `python-collector/` (version `1.0.0`): a standalone Python port of
