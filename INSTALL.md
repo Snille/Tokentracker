@@ -4,9 +4,13 @@ This guide assumes you have:
 
 - A Waveshare ESP32-S3 Touch AMOLED 1.75.
 - Home Assistant with ESPHome.
-- VS Code on the machine where you run Codex and/or Claude Code.
+- The machine where you run Codex and/or Claude Code (via VS Code, a CLI, or
+  a desktop app).
 - Access to this git repo.
-- Node.js LTS on the machine where the VS Code extension will be built.
+- Node.js LTS on the machine where the VS Code extension will be built — only
+  needed if you choose the VS Code extension collector.
+- Python 3.10+ on the machine that will run the collector — only needed if you
+  choose the Python collector.
 - An MQTT broker that Home Assistant can read from, for example the Mosquitto
   broker add-on.
 
@@ -15,8 +19,13 @@ Token Tracker has three parts:
 - The ESPHome display in `esphome/round-token-tracker.yaml`.
 - Home Assistant packages for OpenRouter / Open WebUI in
   `homeassistant/packages/tokentracker/`.
-- The VS Code extension in `vscode-extension/`, which publishes local Codex
-  and Claude Code weekly counters to MQTT discovery.
+- A collector that publishes local Codex and Claude Code weekly counters to
+  MQTT discovery — pick **one**:
+  - The VS Code extension in `vscode-extension/`. Only runs while VS Code is
+    running.
+  - The Python script in `python-collector/`. Runs independently of any
+    editor, scheduled externally (e.g. every minute via a Windows Scheduled
+    Task).
 
 ## 1. Clone the repo
 
@@ -118,10 +127,17 @@ unavailable.
 
 Restart Home Assistant after secrets and packages are in place.
 
-## 4. Build and install the VS Code extension
+## 4. Install a collector: VS Code extension or Python script
 
-The extension must be installed in the VS Code instance where Codex / Claude
-Code runs.
+Both publish the same MQTT discovery sensors. Pick whichever fits how you run
+Codex / Claude Code — install only one, not both (running both is harmless
+since they publish to the same retained topics, just redundant).
+
+### Option A: VS Code extension
+
+Use this if you always run Codex / Claude Code through VS Code. The extension
+must be installed in the VS Code instance where Codex / Claude Code runs, and
+only publishes while VS Code is running.
 
 Go to the extension directory:
 
@@ -164,6 +180,44 @@ Developer: Reload Window
 TokenTracker: Publish Now
 ```
 
+### Option B: Python collector
+
+Use this if Codex / Claude Code run via a CLI or desktop app (not the VS Code
+extension), or if you just don't want to keep VS Code open. The script does
+one publish cycle and exits, so it needs an external scheduler to call it
+repeatedly (e.g. every minute).
+
+```powershell
+cd python-collector
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+Copy-Item config.example.json config.json
+```
+
+Edit `config.json` with your MQTT broker, then test it once:
+
+```powershell
+.\.venv\Scripts\python.exe collector.py
+```
+
+Then schedule it to run every minute on Windows (works without admin rights
+for a task in your own session — adjust the paths to where you cloned the
+repo):
+
+```powershell
+$exe = "C:\path\to\Tokentracker\python-collector\.venv\Scripts\pythonw.exe"
+$script = "C:\path\to\Tokentracker\python-collector\collector.py"
+schtasks /Create /TN "TokenTrackerCollector" /TR "`"$exe`" `"$script`"" /SC MINUTE /MO 1 /F
+```
+
+`pythonw.exe` avoids a flashing console window. Check it fired successfully
+with `schtasks /Query /TN "TokenTrackerCollector" /V /FO LIST` (`Last Result`
+should be `0`), and check `python-collector/collector.log` for details. See
+`python-collector/README.md` for more, including non-Windows schedulers.
+
+### Sensors published by either collector
+
 After a minute or so Home Assistant should receive MQTT discovery sensors
 such as:
 
@@ -178,12 +232,12 @@ sensor.tokentracker_vs_code_claude_code_tokens_week
 sensor.tokentracker_vs_code_updated_at_epoch
 ```
 
-The extension reads local files:
+Both collectors read the same local files:
 
 - Codex: `~/.codex/sessions/**/*.jsonl`, falling back to `~/.codex/state_5.sqlite`.
 - Claude Code: `~/.claude/projects/**/*.jsonl`.
 
-It publishes weekly counters plus Codex's live `rate_limits` snapshot (current
+Both publish weekly counters plus Codex's live `rate_limits` snapshot (current
 5h percent + reset epoch and weekly percent + reset epoch). Claude has no
 equivalent public source so the ESP keeps deriving Claude's 5h window from
 local baselines and the `Claude 5h Start Hour/Minute` sliders.
@@ -338,7 +392,9 @@ On the display:
 
 ## 10. Troubleshooting
 
-### VS Code sensors are missing
+### Collector sensors are missing
+
+VS Code extension:
 
 - Check that the VSIX is installed and that VS Code has been reloaded.
 - Check the MQTT settings in VS Code.
@@ -346,12 +402,23 @@ On the display:
 - Check that the MQTT integration in HA is active.
 - Remember that the extension only runs while VS Code is running.
 
+Python collector:
+
+- Run `.\.venv\Scripts\python.exe collector.py` manually and check the output
+  / `python-collector/collector.log` for connection errors.
+- Check `config.json` has the right MQTT broker/credentials.
+- Check that the MQTT integration in HA is active.
+- Check the scheduled task actually ran: `schtasks /Query /TN
+  "TokenTrackerCollector" /V /FO LIST` — `Last Result` should be `0`.
+
 ### The ESP shows `VS Code offline`
 
-- The VS Code extension has not published in more than 10 minutes.
-- VS Code is closed, the extension is disabled, or MQTT lost connection.
+- Whichever collector you use has not published in more than 10 minutes.
+- VS Code is closed (VS Code extension) or the scheduled task stopped running
+  (Python collector), or MQTT lost connection.
 - Check `sensor.tokentracker_vs_code_updated_at_epoch`.
-- Run `TokenTracker: Publish Now`.
+- VS Code extension: run `TokenTracker: Publish Now`. Python collector: run
+  `collector.py` manually and check the scheduled task status.
 - While offline the ESP keeps showing the last known values and a `Last HH:MM`
   timestamp instead of a relative "Upd X min" age.
 
@@ -383,8 +450,11 @@ Settings -> Devices & services -> Entities
 When the repo changes:
 
 1. Pull the latest code.
-2. Build a new VSIX if `vscode-extension/` changed.
-3. Install the new VSIX and reload VS Code.
+2. If using the VS Code extension: build a new VSIX if `vscode-extension/`
+   changed, install it, and reload VS Code.
+3. If using the Python collector: re-run `pip install -r requirements.txt` if
+   `python-collector/requirements.txt` changed. No need to touch the
+   scheduled task unless the script's path changed.
 4. Update ESPHome if `esphome/round-token-tracker.yaml` changed.
 5. Copy the Home Assistant package files again if `homeassistant/packages/`
    changed.

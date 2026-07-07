@@ -2,10 +2,10 @@
 
 [![Token Tracker demo](https://img.youtube.com/vi/VPfMYzIclb0/maxresdefault.jpg)](https://youtu.be/VPfMYzIclb0)
 
-Project version: `0.4.0`
+Project version: `0.5.0`
 
 Token Tracker is a personal AI-usage display for the Waveshare ESP32-S3 Touch
-AMOLED 1.75, Home Assistant and a small VS Code extension.
+AMOLED 1.75, Home Assistant and a small local collector.
 
 It is built around my own environment, but the structure can be reused if you
 swap out the entity IDs, MQTT settings and API secrets.
@@ -15,15 +15,21 @@ swap out the entity IDs, MQTT settings and API secrets.
 - `esphome/round-token-tracker.yaml` - the ESPHome display.
 - `homeassistant/packages/tokentracker/` - Home Assistant packages for
   OpenRouter and Open WebUI.
-- `vscode-extension/` - VS Code extension that publishes local Codex and
-  Claude Code token counters to MQTT discovery.
+- A local collector that publishes local Codex and Claude Code token counters
+  to MQTT discovery — choose **one**:
+  - `vscode-extension/` - VS Code extension. Only runs while VS Code is
+    running.
+  - `python-collector/` - standalone Python script, scheduled externally
+    (e.g. a Windows Scheduled Task). Keeps working regardless of whether
+    Codex/Claude Code run via VS Code, a CLI, or a desktop app.
 
 ## Versions
 
-- Project: `0.4.0` (`VERSION`)
+- Project: `0.5.0` (`VERSION`)
 - ESPHome display: `1.11.0`
 - Home Assistant package: `1.2.1`
 - VS Code extension: `1.3.1`
+- Python collector: `1.0.0`
 
 See `HISTORY.md` for the change log.
 
@@ -38,12 +44,16 @@ device.
 
 | Source | HA entity | Responsibility |
 | --- | --- | --- |
-| Codex | `sensor.tokentracker_vs_code_codex_tokens_week` | The VS Code extension reads local Codex sessions/SQLite and publishes weekly tokens via MQTT |
-| Claude Code | `sensor.tokentracker_vs_code_claude_code_tokens_week` | The VS Code extension reads local Claude JSONL logs and publishes weekly tokens via MQTT |
+| Codex | `sensor.tokentracker_vs_code_codex_tokens_week` | The collector (VS Code extension or Python script) reads local Codex sessions/SQLite and publishes weekly tokens via MQTT |
+| Claude Code | `sensor.tokentracker_vs_code_claude_code_tokens_week` | The collector reads local Claude JSONL logs and publishes weekly tokens via MQTT |
 | Open WebUI | `sensor.openwebui_tokens_today` | The HA REST package fetches tokens for today from Open WebUI analytics |
 | OpenRouter | `sensor.openrouter_balance_remaining`, `sensor.openrouter_usage_percent` | The HA REST package fetches account credits and usage from OpenRouter |
 
-The VS Code extension is intentionally "raw-only": for Codex and Claude Code it
+Entity IDs still say `vs_code` regardless of which collector publishes to
+them, so switching between `vscode-extension/` and `python-collector/`
+requires no ESPHome or Home Assistant changes.
+
+The collector is intentionally "raw-only": for Codex and Claude Code it
 publishes weekly token values and subfields for input/output/cache/reasoning
 where the source provides them. For Codex it also forwards the live
 `rate_limits` block from the rollout sessions (`primary` = current 5h window
@@ -148,7 +158,11 @@ homeassistant:
 Details about secrets, endpoints and sensors are in
 `homeassistant/packages/tokentracker/README.md`.
 
-## VS Code extension
+## Collector: VS Code extension or Python script
+
+Both publish the same MQTT discovery sensors — pick one.
+
+### VS Code extension
 
 The extension is in `vscode-extension/`.
 
@@ -170,12 +184,24 @@ npm run package
 The extension only runs while VS Code is running. It publishes MQTT discovery
 and state to the same broker that Home Assistant uses.
 
+### Python collector
+
+The standalone script is in `python-collector/`. Unlike the extension, it
+does not depend on VS Code being open — it reads the same local session logs
+directly and is meant to be invoked periodically by an external scheduler
+(e.g. a Windows Scheduled Task running it every minute). Use this if Codex /
+Claude Code run via a CLI or desktop app instead of the VS Code extension.
+
+See `python-collector/README.md` for setup, including the exact
+`schtasks` command to schedule it on Windows.
+
 ## Secrets and repo
 
 This repo should not contain real API keys or tokens. Local files such as
-`.ai-tokens`, `.ha-token`, VSIX files, `node_modules`, `dist` and local VS
-Code settings are listed in `.gitignore`. Built VSIX files are local artifacts
-and should not be checked in.
+`.ai-tokens`, `.ha-token`, VSIX files, `node_modules`, `dist`, local VS Code
+settings and `python-collector/config.json` (holds the real MQTT password) are
+listed in `.gitignore`. Built VSIX files are local artifacts and should not be
+checked in.
 
 If this is published, it should be described as an example project or a
 reference implementation. Anyone else using it will at least need to change:

@@ -1,0 +1,11 @@
+{
+  "mqtt": {
+    "url": "mqtt://homeassistant.local:1883",
+    "username": "tokentracker",
+    "password": "",
+    "discovery_prefix": "homeassistant",
+    "state_prefix": "tokentracker"
+  },
+  "codex_enabled": true,
+  "claude_enabled": true
+}

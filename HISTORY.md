@@ -1,5 +1,21 @@
 # History
 
+## 0.5.0 - 2026-07-07
+
+- Added `python-collector/` (version `1.0.0`): a standalone Python port of
+  the VS Code extension's Codex/Claude Code MQTT publishing logic. Reads the
+  same local session logs (`~/.codex/sessions`, `~/.claude/projects`) but
+  does not depend on VS Code being open — meant to be invoked periodically
+  (e.g. every minute) by an external scheduler such as a Windows Scheduled
+  Task, so tracking keeps working when Codex/Claude Code run via a CLI or
+  desktop app instead of the VS Code extension.
+- Publishes to the same MQTT discovery topics and entity IDs as the VS Code
+  extension, so `esphome/round-token-tracker.yaml` and the Home Assistant
+  packages need no changes when switching collectors.
+- Documented both collectors as alternatives (pick one) in `README.md` and
+  `INSTALL.md`; the VS Code extension is unchanged and still supported for
+  anyone who prefers it.
+
 ## 0.4.0 - 2026-05-19
 
 - Bumped ESPHome display to `1.11.0`.
