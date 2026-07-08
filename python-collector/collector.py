@@ -14,6 +14,8 @@ import logging
 import os
 import sqlite3
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -23,6 +25,15 @@ import paho.mqtt.client as mqtt
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 LOG_PATH = Path(__file__).with_name("collector.log")
+
+# Real Claude subscription rate limits (the numbers `/usage` and the Claude Code
+# statusline show) come from an authenticated endpoint, NOT the session logs. This
+# is the same source Claude Code itself uses (its `fetchUtilization`). Querying it
+# directly makes the % fully headless — no statusline, no terminal session, works
+# regardless of whether Claude Code runs via the desktop app, CLI, or not at all.
+CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+RATE_LIMIT_CACHE_PATH = Path.home() / ".claude" / "claude_rate_limits.json"
+OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,6 +82,10 @@ SENSORS = [
     {"id": "claude_cache_creation_input_tokens_week", "object_id": "tokentracker_vs_code_claude_code_cache_creation_tokens_week", "name": "Claude Code Cache Creation Tokens Week", "unit": "tokens", "icon": "mdi:database-plus-outline"},
     {"id": "claude_cache_read_input_tokens_week", "object_id": "tokentracker_vs_code_claude_code_cache_read_tokens_week", "name": "Claude Code Cache Read Tokens Week", "unit": "tokens", "icon": "mdi:database-eye-outline"},
     {"id": "claude_output_tokens_week", "object_id": "tokentracker_vs_code_claude_code_output_tokens_week", "name": "Claude Code Output Tokens Week", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
+    {"id": "claude_5h_used_percent", "object_id": "tokentracker_vs_code_claude_code_5h_used_percent", "name": "Claude Code 5h Used Percent", "unit": "%", "icon": "mdi:gauge"},
+    {"id": "claude_5h_resets_at", "object_id": "tokentracker_vs_code_claude_code_5h_resets_at", "name": "Claude Code 5h Resets At", "unit": "s", "icon": "mdi:timer-sand"},
+    {"id": "claude_weekly_used_percent", "object_id": "tokentracker_vs_code_claude_code_weekly_used_percent", "name": "Claude Code Weekly Used Percent", "unit": "%", "icon": "mdi:gauge-full"},
+    {"id": "claude_weekly_resets_at", "object_id": "tokentracker_vs_code_claude_code_weekly_resets_at", "name": "Claude Code Weekly Resets At", "unit": "s", "icon": "mdi:calendar-refresh-outline"},
 ]
 
 
@@ -298,6 +313,12 @@ def find_usage_objects(value, found=None) -> list:
 
 
 CLAUDE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+# Keys that count toward the headline `claude_tokens_week` total. Cache-read is
+# deliberately excluded: it dwarfs everything else (often >95% of the raw sum)
+# and cache reads are billed at ~0.1x, so including them at full weight makes the
+# total meaningless for the display's usage gauge. It is still collected into its
+# own `claude_cache_read_input_tokens_week` sensor below.
+CLAUDE_TOTAL_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens")
 
 
 def read_claude_usage() -> dict:
@@ -337,7 +358,7 @@ def read_claude_usage() -> dict:
 
 
 def _claude_payload(bucket: dict) -> dict:
-    total = sum(numeric(bucket.get(key)) for key in CLAUDE_KEYS)
+    total = sum(numeric(bucket.get(key)) for key in CLAUDE_TOTAL_KEYS)
     return {
         "claude_tokens_week": total,
         "claude_input_tokens_week": numeric(bucket.get("input_tokens")),
@@ -345,6 +366,86 @@ def _claude_payload(bucket: dict) -> dict:
         "claude_cache_read_input_tokens_week": numeric(bucket.get("cache_read_input_tokens")),
         "claude_output_tokens_week": numeric(bucket.get("output_tokens")),
     }
+
+
+def empty_claude_rate_limits() -> dict:
+    return {
+        "claude_5h_used_percent": 0, "claude_5h_resets_at": 0,
+        "claude_weekly_used_percent": 0, "claude_weekly_resets_at": 0,
+    }
+
+
+def _iso_to_epoch(value) -> float:
+    if not isinstance(value, str) or not value.strip():
+        return 0
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp())
+    except ValueError:
+        return 0
+
+
+def _oauth_access_token() -> str | None:
+    try:
+        with open(CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+    token = (data.get("claudeAiOauth") or {}).get("accessToken")
+    return token if isinstance(token, str) and token else None
+
+
+def fetch_claude_oauth_usage() -> dict | None:
+    """GET /api/oauth/usage for the real subscription rate limits. Returns None on
+    any failure (missing/expired token, offline) so the caller can fall back to the
+    last cached value. The endpoint reports `utilization` (percent) and an ISO-8601
+    `resets_at`; we map those to the percent + epoch the display already expects."""
+    token = _oauth_access_token()
+    if not token:
+        return None
+    req = urllib.request.Request(
+        OAUTH_USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.load(resp)
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as error:
+        log.warning("oauth/usage fetch failed: %s", error)
+        return None
+    five = body.get("five_hour") or {}
+    seven = body.get("seven_day") or {}
+    return {
+        "claude_5h_used_percent": numeric(five.get("utilization")),
+        "claude_5h_resets_at": _iso_to_epoch(five.get("resets_at")),
+        "claude_weekly_used_percent": numeric(seven.get("utilization")),
+        "claude_weekly_resets_at": _iso_to_epoch(seven.get("resets_at")),
+    }
+
+
+def read_claude_rate_limits() -> dict:
+    """Real Claude subscription rate-limit % for the display. Primary source is the
+    authenticated `/api/oauth/usage` endpoint (headless — no statusline/terminal).
+    On failure (token expired while Claude Code is idle, or offline) fall back to
+    the last cached response so the display holds the last known value instead of
+    dropping to 0; the display's `resets_at` gating still zeroes a window once it
+    actually rolls over."""
+    fresh = fetch_claude_oauth_usage()
+    if fresh is not None:
+        try:
+            RATE_LIMIT_CACHE_PATH.write_text(json.dumps(fresh), encoding="utf-8")
+        except OSError:
+            pass
+        return fresh
+    try:
+        with open(RATE_LIMIT_CACHE_PATH, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return empty_claude_rate_limits()
+    return {key: numeric(cached.get(key)) for key in empty_claude_rate_limits()}
 
 
 def build_payload(config: dict) -> dict:
@@ -365,6 +466,11 @@ def build_payload(config: dict) -> dict:
         except Exception as error:  # noqa: BLE001
             log.error("Claude read failed: %s", error)
             payload.update(_claude_payload({key: 0 for key in CLAUDE_KEYS}))
+        try:
+            payload.update(read_claude_rate_limits())
+        except Exception as error:  # noqa: BLE001
+            log.error("Claude rate-limit read failed: %s", error)
+            payload.update(empty_claude_rate_limits())
     return payload
 
 

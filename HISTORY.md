@@ -1,5 +1,22 @@
 # History
 
+## 0.6.0 - 2026-07-08
+
+- `python-collector/` (version `1.1.0`): the collector now publishes the **real**
+  Claude subscription rate-limit percentages. New function `fetch_claude_oauth_usage()`
+  queries `GET https://api.anthropic.com/api/oauth/usage` (the same source Claude Code
+  uses) with the OAuth access token from `~/.claude/.credentials.json`, mapping
+  `five_hour`/`seven_day` `utilization` + ISO `resets_at` to four new sensors
+  (`claude_5h_used_percent`, `claude_5h_resets_at`, `claude_weekly_used_percent`,
+  `claude_weekly_resets_at`). This is headless — no Claude Code statusline or terminal
+  session needed — and falls back to the last cached response (`~/.claude/claude_rate_limits.json`)
+  when the token is briefly expired/offline. The statusline-based prototype was removed.
+- `claude_tokens_week` no longer counts **cache-read** tokens (`CLAUDE_TOTAL_KEYS` =
+  input + output + cache-creation). Cache reads dwarfed everything (>95% of the raw sum)
+  and are billed at ~0.1×, so the headline total is now meaningful for the display gauge;
+  cache-read is still published to its own `claude_cache_read_input_tokens_week` sensor.
+- `.gitignore`: also ignore rotated logs (`*.log.*`).
+
 ## 0.5.1 - 2026-07-07
 
 - Fixed `python-collector/` (version `1.0.1`): it did **not** actually publish

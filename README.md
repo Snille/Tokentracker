@@ -2,7 +2,7 @@
 
 [![Token Tracker demo](https://img.youtube.com/vi/VPfMYzIclb0/maxresdefault.jpg)](https://youtu.be/VPfMYzIclb0)
 
-Project version: `0.5.0`
+Project version: `0.6.0`
 
 Token Tracker is a personal AI-usage display for the Waveshare ESP32-S3 Touch
 AMOLED 1.75, Home Assistant and a small local collector.
