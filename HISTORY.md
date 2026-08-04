@@ -42,6 +42,10 @@
   the real `sensor.tokentracker_*` names.
 - Removed the unused `LEGACY_SENSOR_IDS` list from `collector.py` — dead code
   from a migration that has long since completed.
+- Removed `homeassistant/cleanup-old-token-tracker.md`. It documented a one-time
+  migration away from `command_line`-based entities several versions ago, and
+  its remaining advice — that the VS Code extension publishes discovery
+  tombstones — no longer applies now that the extension is gone.
 - The extension is in the git history if it is ever wanted back.
 
 ### Repo split: the display moved out
