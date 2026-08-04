@@ -2,143 +2,94 @@
 
 [![Token Tracker demo](https://img.youtube.com/vi/VPfMYzIclb0/maxresdefault.jpg)](https://youtu.be/VPfMYzIclb0)
 
-Project version: `0.6.0`
+Project version: `0.7.0`
 
-Token Tracker is a personal AI-usage display for the Waveshare ESP32-S3 Touch
-AMOLED 1.75, Home Assistant and a small local collector.
+Token Tracker collects personal AI usage — Codex, Claude Code, OpenRouter, Open
+WebUI and [rtk](https://github.com/rtk-ai/rtk) — into Home Assistant, where a
+small round ESPHome display shows it on the wall.
+
+**This repo is the data pipeline only.** It gathers the numbers and publishes
+them to Home Assistant over MQTT discovery. The physical display is an ESPHome
+device that lives in its own repository (see
+[The display](#the-display) below) — the two were split so the device config has
+exactly one home and cannot drift out of sync with the hardware again.
 
 It is built around my own environment, but the structure can be reused if you
 swap out the entity IDs, MQTT settings and API secrets.
 
 ## Parts
 
-- `esphome/round-token-tracker.yaml` - the ESPHome display.
-- `homeassistant/packages/tokentracker/` - Home Assistant packages for
-  OpenRouter and Open WebUI.
-- A local collector that publishes local Codex and Claude Code token counters
-  to MQTT discovery — choose **one**:
-  - `vscode-extension/` - VS Code extension. Only runs while VS Code is
-    running.
-  - `python-collector/` - standalone Python script, scheduled externally
-    (e.g. a Windows Scheduled Task). Keeps working regardless of whether
-    Codex/Claude Code run via VS Code, a CLI, or a desktop app.
+- `python-collector/` - a standalone Python script, run periodically by an
+  external scheduler (e.g. a Windows Scheduled Task every minute). Reads the
+  local Codex and Claude Code session logs, queries Anthropic's usage endpoint
+  for the real Claude rate limits, runs `rtk gain` for the savings numbers, and
+  publishes the lot over MQTT discovery.
+- `homeassistant/packages/tokentracker/` - Home Assistant packages that poll
+  OpenRouter and Open WebUI over REST.
 
 ## Versions
 
-- Project: `0.5.0` (`VERSION`)
-- ESPHome display: `1.11.0`
+- Project: `0.7.0` (`VERSION`)
 - Home Assistant package: `1.2.1`
-- VS Code extension: `1.3.1`
-- Python collector: `1.0.0`
+- Python collector: `1.2.0`
 
 See `HISTORY.md` for the change log.
 
-See `INSTALL.md` for a step-by-step installation from an empty Home Assistant /
-VS Code / ESPHome environment.
+See `INSTALL.md` for a step-by-step installation from an empty Home Assistant
+environment.
 
 ## Data model
 
-The display fetches raw values from Home Assistant and computes max, remaining
-and percent itself. Max values are adjusted as config entities on the ESPHome
-device.
+The collector is intentionally "raw-only": it publishes counters and lets the
+display compute maxima, remaining amounts and percentages.
 
 | Source | HA entity | Responsibility |
 | --- | --- | --- |
-| Codex | `sensor.tokentracker_vs_code_codex_tokens_week` | The collector (VS Code extension or Python script) reads local Codex sessions/SQLite and publishes weekly tokens via MQTT |
-| Claude Code | `sensor.tokentracker_vs_code_claude_code_tokens_week` | The collector reads local Claude JSONL logs and publishes weekly tokens via MQTT |
+| Codex | `sensor.tokentracker_codex_tokens_week` | The collector reads local Codex sessions/SQLite and publishes weekly tokens via MQTT |
+| Claude Code | `sensor.tokentracker_claude_code_tokens_week` | The collector reads local Claude JSONL logs and publishes weekly tokens via MQTT |
+| Claude limits | `sensor.tokentracker_claude_code_5h_used_percent` | The Python collector queries `GET /api/oauth/usage` for the real subscription rate limits |
 | Open WebUI | `sensor.openwebui_tokens_today` | The HA REST package fetches tokens for today from Open WebUI analytics |
 | OpenRouter | `sensor.openrouter_balance_remaining`, `sensor.openrouter_usage_percent` | The HA REST package fetches account credits and usage from OpenRouter |
+| rtk | `sensor.tokentracker_rtk_saved_tokens_total` and ten more `tokentracker_rtk_*` | The Python collector runs `rtk gain --all --format json` and publishes the savings summary |
 
-Entity IDs still say `vs_code` regardless of which collector publishes to
-them, so switching between `vscode-extension/` and `python-collector/`
-requires no ESPHome or Home Assistant changes.
+For Codex the collector also forwards the live `rate_limits` block from the
+rollout sessions (`primary` = current 5h window percent + reset epoch,
+`secondary` = weekly window percent + reset epoch, plus `plan_type`). Claude's
+equivalent comes from the authenticated `/api/oauth/usage` endpoint, which is
+the same source Claude Code itself uses.
 
-The collector is intentionally "raw-only": for Codex and Claude Code it
-publishes weekly token values and subfields for input/output/cache/reasoning
-where the source provides them. For Codex it also forwards the live
-`rate_limits` block from the rollout sessions (`primary` = current 5h window
-percent + reset epoch, `secondary` = weekly window percent + reset epoch, plus
-`plan_type`). The ESPHome display uses Codex's real 5h/weekly percent and reset
-times directly on the Codex screen; Claude's session windows are not exposed by
-Anthropic so the ESP keeps deriving Claude's 5h from local baselines anchored
-to `Claude 5h Start Hour/Minute`.
+`claude_tokens_week` deliberately excludes cache-read tokens: they dwarf
+everything else (often >95% of the raw sum) and are billed at roughly 0.1x, so
+including them at full weight would make the headline total useless as a gauge.
+Cache reads still get their own sensor.
 
-When the Codex `primary.resets_at` changes the ESP re-baselines the per-5h
-input/output/cached/reasoning breakdown so the token deltas match Codex's own
-sliding 5h window. Past `resets_at` epochs zero the corresponding ring so a
-long pause from Codex no longer leaves stale percentages on the display.
-`tokens left`, usage percent and max limits live in ESPHome/HA so they can be
-adjusted on the Token Tracker device.
+### A note on entity IDs
 
-## ESPHome display
+Home Assistant builds these entity IDs from the **device name plus the sensor's
+friendly name**, not from the MQTT `object_id`. That is why, for example, the
+sensor whose `object_id` is `tokentracker_rtk_input_tokens_total` appears as
+`sensor.tokentracker_rtk_raw_tokens_total` — the name is "RTK Raw Tokens Total".
+When adding a sensor, check the real entity ID in Home Assistant before pointing
+anything at it, rather than assuming it matches the `object_id`.
 
-Current ESPHome version: `1.11.0`.
+## The display
 
-The display shows:
+The ESPHome device is **not** in this repo. It is
+`storstugan-office-token-tracker-128.yaml` in my private ESPHome repository,
+built and flashed with the toolchain that lives there.
 
-- Clock.
-- Codex with input/output/cache/reasoning.
-- Claude Code with input/output/cache.
-- OpenRouter with account balance, key count, key usage and activity history.
-- Open WebUI with input/output, chats, active users and model count.
-- Quadrant overview with Codex, Claude Code, OpenRouter, Open WebUI and an
-  analog clock.
-- I/O Mix with input/output/cache/reasoning across all sources.
-- 5h + Week with local 5h values, weekly totals, chats and key count.
+Current hardware: Waveshare ESP32-S3-Touch-LCD-1.28 — a round 240x240 GC9A01
+LCD with CST816 touch and a QMI8658 IMU. It shows a clock, one screen each for
+Codex, Claude Code, OpenRouter, Open WebUI and rtk, and a 2x2 overview with an
+rtk savings rate in the middle. Swipe to page, tap a tile on the overview to
+jump to it.
 
-Controls:
+An earlier 466x466 AMOLED version (Waveshare ESP32-S3 Touch AMOLED 1.75) used to
+live in this repo under `esphome/`. That screen has been repurposed and the
+config was removed in 0.7.0; it is still in the git history if you want it.
 
-- Swipe left/right to change screens.
-- Tapping an individual provider screen jumps back to the quadrant overview.
-- Tapping a quadrant jumps to the matching provider screen.
-- A short press on the physical top button pauses/resumes the auto-rotate timer.
-- A long press on the top button turns the display off/on.
-- `Next Screen` and `Previous Screen` are also available as HA buttons.
-
-Visual rings:
-
-- The outer usage ring shows usage against the max value. For Codex and Claude
-  Code it is split: the upper half shows 5h usage and the lower blue half shows
-  weekly usage relative to a weekly budget based on the same 5h max.
-  OpenRouter and Open WebUI keep their previous full-ring logic.
-- The dark-blue inner timer ring shows time remaining until the next
-  auto-rotate, and disappears when auto-rotate is paused.
-- The clock screen uses the outer ring as a seconds hand.
-
-Important config entities on the ESPHome device:
-
-- `Max Codex per 5h` in ktokens. Used only as a local "what counts as 100%"
-  hint for parts of the UI; the real Codex 5h/weekly percentages now come from
-  the live Codex `rate_limits` sensors so this slider is mostly cosmetic for
-  Codex.
-- `Max Claude per 5h` in ktokens. Drives both the Claude 5h ring (`used / max`)
-  and the synthetic weekly ring (`week_total / (max × 33.6)`). Calibrate it
-  against what Claude Code reports in `Settings → Usage`; there is no public
-  Anthropic API for the real Pro/Max limits.
-- `Max WebUI` in ktokens.
-- `Claude 5h Start Hour` and `Claude 5h Start Minute` — anchors the Claude
-  5h baseline rollover. Codex no longer needs these sliders because it
-  re-baselines from `codex_5h_resets_at`.
-- `Display Brightness Percent`.
-- `Screen Interval` for the single screens.
-- `Overview Screen Interval` for the quadrant, I/O Mix and 5h + Week screens.
-- `Display Rotation`.
-- `Auto Orientation`.
-- `Auto Rotate Screens`.
-- `Show Clock`, `Show Codex`, `Show Claude Code`, `Show OpenRouter`,
-  `Show Open WebUI`, `Show Overview`.
-
-Substitutions at the top of `esphome/round-token-tracker.yaml` control the
-entity IDs and slider max values. Example:
-
-```yaml
-openai_week_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_week
-anthropic_week_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_week
-openwebui_tokens_entity: sensor.openwebui_tokens_today
-codex_max_ktokens: "11400"
-claude_max_ktokens: "50000"
-openwebui_max_ktokens: "1250"
-```
+Anything the display needs from this repo is just the MQTT sensors above — if
+you build your own display, those entity IDs are the contract.
 
 ## Home Assistant
 
@@ -158,50 +109,35 @@ homeassistant:
 Details about secrets, endpoints and sensors are in
 `homeassistant/packages/tokentracker/README.md`.
 
-## Collector: VS Code extension or Python script
+## The collector
 
-Both publish the same MQTT discovery sensors — pick one.
+The script is in `python-collector/`. It does one publish cycle and exits, so it
+needs an external scheduler to call it repeatedly — there is no long-lived host
+process. It reads the session logs Codex and Claude Code write anyway, so it
+works whether those run via a CLI, a desktop app, or an editor.
 
-### VS Code extension
+See `python-collector/README.md` for setup, including the exact `schtasks`
+command to schedule it on Windows.
 
-The extension is in `vscode-extension/`.
+A VS Code extension used to be the alternative collector. It was removed in
+0.7.0: it had stopped being installed, never gained the rtk or Claude
+rate-limit sensors, and its MQTT device name (`TokenTracker VS Code`) produced a
+second, conflicting set of `..._vs_code_*` entity IDs. It is in the git history.
 
-Install a built VSIX via:
+### rtk
 
-```text
-Extensions -> ... -> Install from VSIX...
-```
-
-Build an installable VSIX when needed with:
-
-```powershell
-cd vscode-extension
-npm install
-npm run compile
-npm run package
-```
-
-The extension only runs while VS Code is running. It publishes MQTT discovery
-and state to the same broker that Home Assistant uses.
-
-### Python collector
-
-The standalone script is in `python-collector/`. Unlike the extension, it
-does not depend on VS Code being open — it reads the same local session logs
-directly and is meant to be invoked periodically by an external scheduler
-(e.g. a Windows Scheduled Task running it every minute). Use this if Codex /
-Claude Code run via a CLI or desktop app instead of the VS Code extension.
-
-See `python-collector/README.md` for setup, including the exact
-`schtasks` command to schedule it on Windows.
+If [rtk](https://github.com/rtk-ai/rtk) is on `PATH`, the Python collector adds
+its savings numbers to every publish cycle and the display's rtk screen fills
+in. Nothing needs configuring — the collector detects rtk itself and omits the
+sensors entirely when it is not installed. Set `"rtk_enabled": false` in
+`config.json` to skip it anyway, or `"rtk_command"` to point at a binary that
+is not on `PATH`.
 
 ## Secrets and repo
 
 This repo should not contain real API keys or tokens. Local files such as
-`.ai-tokens`, `.ha-token`, VSIX files, `node_modules`, `dist`, local VS Code
-settings and `python-collector/config.json` (holds the real MQTT password) are
-listed in `.gitignore`. Built VSIX files are local artifacts and should not be
-checked in.
+`.ai-tokens`, `.ha-token` and `python-collector/config.json` (which holds the
+real MQTT password) are listed in `.gitignore`.
 
 If this is published, it should be described as an example project or a
 reference implementation. Anyone else using it will at least need to change:
@@ -210,22 +146,3 @@ reference implementation. Anyone else using it will at least need to change:
 - MQTT broker and credentials.
 - OpenRouter secrets.
 - Open WebUI URLs and admin bearer.
-- ESPHome Wi-Fi / base configuration.
-
-## Hardware
-
-The configuration is built for the Waveshare ESP32-S3 Touch AMOLED 1.75:
-
-- CO5300 AMOLED, 466x466, QSPI.
-- CST9217 touch.
-- QMI8658 IMU for auto-orientation.
-- GPIO38/4/5/6/7 for the QSPI display.
-- GPIO12 CS, GPIO39 display reset.
-- GPIO14/GPIO15 I2C.
-- GPIO11 touch interrupt, GPIO40 touch reset.
-
-References:
-
-- https://www.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-1.75
-- https://devices.esphome.io/devices/waveshare-esp32-s3-touch-amoled-1.75/
-- https://esphome.io/components/touchscreen/

@@ -1,31 +1,28 @@
 # Install Token Tracker from scratch
 
-This guide assumes you have:
+This guide covers the data pipeline: getting your AI usage into Home Assistant.
+The display that renders it is a separate ESPHome device and is not part of this
+repo — see step 5.
 
-- A Waveshare ESP32-S3 Touch AMOLED 1.75.
-- Home Assistant with ESPHome.
-- The machine where you run Codex and/or Claude Code (via VS Code, a CLI, or
-  a desktop app).
+It assumes you have:
+
+- Home Assistant.
+- The machine where you run Codex and/or Claude Code (via a CLI, a desktop app,
+  or an editor).
 - Access to this git repo.
-- Node.js LTS on the machine where the VS Code extension will be built — only
-  needed if you choose the VS Code extension collector.
-- Python 3.10+ on the machine that will run the collector — only needed if you
-  choose the Python collector.
+- Python 3.10+ on the machine that will run the collector.
 - An MQTT broker that Home Assistant can read from, for example the Mosquitto
   broker add-on.
+- Optionally [rtk](https://github.com/rtk-ai/rtk) on the same machine, to get
+  the rtk savings sensors.
 
-Token Tracker has three parts:
+Token Tracker has two parts:
 
-- The ESPHome display in `esphome/round-token-tracker.yaml`.
+- The collector in `python-collector/`, which publishes local Codex, Claude Code
+  and rtk counters to MQTT discovery. It is scheduled externally, e.g. every
+  minute via a Windows Scheduled Task.
 - Home Assistant packages for OpenRouter / Open WebUI in
   `homeassistant/packages/tokentracker/`.
-- A collector that publishes local Codex and Claude Code weekly counters to
-  MQTT discovery — pick **one**:
-  - The VS Code extension in `vscode-extension/`. Only runs while VS Code is
-    running.
-  - The Python script in `python-collector/`. Runs independently of any
-    editor, scheduled externally (e.g. every minute via a Windows Scheduled
-    Task).
 
 ## 1. Clone the repo
 
@@ -47,7 +44,7 @@ Assistant the easiest option is:
 Settings -> Add-ons -> Mosquitto broker
 ```
 
-Create an MQTT user that the VS Code extension can use, for example:
+Create an MQTT user that the collector can use, for example:
 
 ```text
 username: tokentracker
@@ -127,65 +124,10 @@ unavailable.
 
 Restart Home Assistant after secrets and packages are in place.
 
-## 4. Install a collector: VS Code extension or Python script
+## 4. Install the collector
 
-Both publish the same MQTT discovery sensors. Pick whichever fits how you run
-Codex / Claude Code — install only one, not both (running both is harmless
-since they publish to the same retained topics, just redundant).
-
-### Option A: VS Code extension
-
-Use this if you always run Codex / Claude Code through VS Code. The extension
-must be installed in the VS Code instance where Codex / Claude Code runs, and
-only publishes while VS Code is running.
-
-Go to the extension directory:
-
-```powershell
-cd vscode-extension
-npm install
-npm run compile
-npm run package
-```
-
-That produces a VSIX, for example:
-
-```text
-tokentracker-vscode-1.3.1.vsix
-```
-
-Install it in VS Code:
-
-```text
-Extensions -> ... -> Install from VSIX...
-```
-
-Then add settings in VS Code `settings.json`:
-
-```json
-{
-  "tokentracker.mqtt.url": "mqtt://homeassistant.local:1883",
-  "tokentracker.mqtt.username": "tokentracker",
-  "tokentracker.mqtt.password": "mqtt-password",
-  "tokentracker.publishIntervalSeconds": 60,
-  "tokentracker.codex.enabled": true,
-  "tokentracker.claude.enabled": true
-}
-```
-
-Optionally run:
-
-```text
-Developer: Reload Window
-TokenTracker: Publish Now
-```
-
-### Option B: Python collector
-
-Use this if Codex / Claude Code run via a CLI or desktop app (not the VS Code
-extension), or if you just don't want to keep VS Code open. The script does
-one publish cycle and exits, so it needs an external scheduler to call it
-repeatedly (e.g. every minute).
+The script does one publish cycle and exits, so it needs an external scheduler
+to call it repeatedly (e.g. every minute).
 
 ```powershell
 cd python-collector
@@ -216,146 +158,103 @@ with `schtasks /Query /TN "TokenTrackerCollector" /V /FO LIST` (`Last Result`
 should be `0`), and check `python-collector/collector.log` for details. See
 `python-collector/README.md` for more, including non-Windows schedulers.
 
-### Sensors published by either collector
+### Sensors published by the collector
 
 After a minute or so Home Assistant should receive MQTT discovery sensors
 such as:
 
 ```text
-sensor.tokentracker_vs_code_codex_tokens_week
-sensor.tokentracker_vs_code_codex_5h_used_percent
-sensor.tokentracker_vs_code_codex_5h_resets_at
-sensor.tokentracker_vs_code_codex_weekly_used_percent
-sensor.tokentracker_vs_code_codex_weekly_resets_at
-sensor.tokentracker_vs_code_codex_plan_type
-sensor.tokentracker_vs_code_claude_code_tokens_week
-sensor.tokentracker_vs_code_updated_at_epoch
+sensor.tokentracker_codex_tokens_week
+sensor.tokentracker_codex_5h_used_percent
+sensor.tokentracker_codex_5h_resets_at
+sensor.tokentracker_codex_weekly_used_percent
+sensor.tokentracker_codex_weekly_resets_at
+sensor.tokentracker_codex_plan_type
+sensor.tokentracker_claude_code_tokens_week
+sensor.tokentracker_updated_at_epoch
 ```
 
-Both collectors read the same local files:
+The Python collector adds eleven `sensor.tokentracker_rtk_*` entities when
+[rtk](https://github.com/rtk-ai/rtk) is installed, e.g.:
+
+```text
+sensor.tokentracker_rtk_saved_tokens_total
+sensor.tokentracker_rtk_saved_tokens_today
+sensor.tokentracker_rtk_saved_percent_total
+sensor.tokentracker_rtk_commands_total
+```
+
+These feed the display's rtk page. They need no setup — the collector looks for
+the `rtk` binary on `PATH` and skips them silently when it is not there. If your
+scheduler runs with a `PATH` that does not include rtk, set `"rtk_command"` in
+`config.json` to the absolute path.
+
+Note that Home Assistant derives these entity IDs from the device name plus each
+sensor's friendly name rather than from the MQTT `object_id`, so check the real
+names in Home Assistant before wiring anything to them.
+
+The collector reads these local files:
 
 - Codex: `~/.codex/sessions/**/*.jsonl`, falling back to `~/.codex/state_5.sqlite`.
 - Claude Code: `~/.claude/projects/**/*.jsonl`.
 
-Both publish weekly counters plus Codex's live `rate_limits` snapshot (current
-5h percent + reset epoch and weekly percent + reset epoch). Claude has no
-equivalent public source so the ESP keeps deriving Claude's 5h window from
-local baselines and the `Claude 5h Start Hour/Minute` sliders.
+It publishes weekly counters plus Codex's live `rate_limits` snapshot (current
+5h percent + reset epoch and weekly percent + reset epoch). Claude's equivalent
+comes from the authenticated `/api/oauth/usage` endpoint, using the OAuth token
+in `~/.claude/.credentials.json` — the same source Claude Code itself uses. When
+that call fails the collector falls back to the last cached response in
+`~/.claude/claude_rate_limits.json`.
 
-## 5. Prepare ESPHome secrets
+## 5. The display
 
-The ESPHome file includes:
+The ESPHome device is not part of this repo. Token Tracker publishes the MQTT
+sensors listed above; anything that can read Home Assistant entities can render
+them.
 
-```yaml
-<<: !include base/base-iot.yaml
-```
+My own display is a Waveshare ESP32-S3-Touch-LCD-1.28 (round 240x240 GC9A01)
+whose ESPHome config lives in my private ESPHome repository as
+`storstugan-office-token-tracker-128.yaml`, and is built and flashed from there.
+If you want to build your own, the entity IDs in the previous section are the
+whole contract between the pipeline and the screen.
 
-`esphome/base/base-iot.yaml` requires these secrets in ESPHome:
 
-```yaml
-iot_wifi_ssid: "your-iot-wifi"
-iot_wifi_password: "wifi-password"
-iot_wifi_domain: ".local"
-wifi_ap_password: "fallback-ap-password"
-api_key: "base64-api-key-from-esphome"
-ota_password: "ota-password"
-```
-
-In the ESPHome Dashboard you can create a new device just to get an API
-encryption key, or generate one yourself according to the ESPHome
-documentation.
-
-## 6. Add the ESPHome configuration
-
-Copy these parts to your ESPHome configuration directory:
-
-```text
-esphome/round-token-tracker.yaml
-esphome/base/base-iot.yaml
-esphome/images/
-```
-
-Open `round-token-tracker.yaml` and check the substitutions at the top:
-
-```yaml
-openai_week_tokens_entity: sensor.tokentracker_vs_code_codex_tokens_week
-anthropic_week_tokens_entity: sensor.tokentracker_vs_code_claude_code_tokens_week
-vscode_updated_at_epoch_entity: sensor.tokentracker_vs_code_updated_at_epoch
-openwebui_tokens_entity: sensor.openwebui_tokens_today
-codex_max_ktokens: "250000"
-claude_max_ktokens: "250000"
-openwebui_max_ktokens: "1250"
-```
-
-Change the entity IDs if your HA entities are named differently.
-
-## 7. Flash the display
-
-In the ESPHome Dashboard:
-
-1. Add or open the device `round-token-tracker`.
-2. Select `Install`.
-3. The first time: use USB to the display.
-4. After the first flash, OTA can be used if Wi-Fi / API works.
-
-The configuration uses an external component for the touch driver:
-
-```text
-https://github.com/shelson/esphome-cst9217
-```
-
-ESPHome therefore needs internet access at build time unless the component
-is already cached.
-
-## 8. Configure the display in Home Assistant
-
-When the ESP connects, Token Tracker appears as an ESPHome device in Home
-Assistant. Configure the most important config entities:
-
-- `Max Codex per 5h` (mostly cosmetic for Codex now; real percentages come
-  from Codex `rate_limits`)
-- `Max Claude per 5h` (drives both the Claude 5h ring and the synthetic weekly
-  ring `week / (max × 33.6)`; calibrate against Claude Code `Settings → Usage`)
-- `Max WebUI`
-- `Claude 5h Start Hour`
-- `Claude 5h Start Minute`
-- `Display Brightness Percent`
-- `Screen Interval`
-- `Overview Screen Interval`
-- `Auto Rotate Screens`
-- `Show Clock`, `Show Codex`, `Show Claude Code`, `Show OpenRouter`,
-  `Show Open WebUI`, `Show Overview`
-
-`Claude 5h Start Hour` is `0-24`. `0` means `00:00`, and `24` is treated as
-`00:00`. Minute is `0-59`. Set this to roughly when your Claude session
-typically starts; the ESP rebases the Claude 5h breakdown every time the
-period crosses that anchor.
-
-Codex's 5h breakdown re-baselines automatically when Codex itself reports a
-new `primary.resets_at` in its session logs, so there are no Codex 5h start
-sliders.
-
-## 9. Check that everything works
+## 6. Check that everything works
 
 In Home Assistant you should see:
 
 ```text
-sensor.tokentracker_vs_code_codex_tokens_week
-sensor.tokentracker_vs_code_codex_input_tokens_week
-sensor.tokentracker_vs_code_codex_cached_input_tokens_week
-sensor.tokentracker_vs_code_codex_output_tokens_week
-sensor.tokentracker_vs_code_codex_reasoning_output_tokens_week
-sensor.tokentracker_vs_code_codex_5h_used_percent
-sensor.tokentracker_vs_code_codex_5h_resets_at
-sensor.tokentracker_vs_code_codex_weekly_used_percent
-sensor.tokentracker_vs_code_codex_weekly_resets_at
-sensor.tokentracker_vs_code_codex_plan_type
-sensor.tokentracker_vs_code_claude_code_tokens_week
-sensor.tokentracker_vs_code_claude_code_input_tokens_week
-sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_week
-sensor.tokentracker_vs_code_claude_code_cache_read_tokens_week
-sensor.tokentracker_vs_code_claude_code_output_tokens_week
-sensor.tokentracker_vs_code_updated_at_epoch
+sensor.tokentracker_codex_tokens_week
+sensor.tokentracker_codex_input_tokens_week
+sensor.tokentracker_codex_cached_input_tokens_week
+sensor.tokentracker_codex_output_tokens_week
+sensor.tokentracker_codex_reasoning_output_tokens_week
+sensor.tokentracker_codex_5h_used_percent
+sensor.tokentracker_codex_5h_resets_at
+sensor.tokentracker_codex_weekly_used_percent
+sensor.tokentracker_codex_weekly_resets_at
+sensor.tokentracker_codex_plan_type
+sensor.tokentracker_claude_code_tokens_week
+sensor.tokentracker_claude_code_input_tokens_week
+sensor.tokentracker_claude_code_cache_creation_tokens_week
+sensor.tokentracker_claude_code_cache_read_tokens_week
+sensor.tokentracker_claude_code_output_tokens_week
+sensor.tokentracker_updated_at_epoch
+```
+
+With the Python collector and rtk installed, also:
+
+```text
+sensor.tokentracker_rtk_saved_tokens_total
+sensor.tokentracker_rtk_saved_tokens_today
+sensor.tokentracker_rtk_saved_tokens_week
+sensor.tokentracker_rtk_saved_percent_total
+sensor.tokentracker_rtk_saved_percent_today
+sensor.tokentracker_rtk_saved_percent_week
+sensor.tokentracker_rtk_commands_total
+sensor.tokentracker_rtk_commands_today
+sensor.tokentracker_rtk_commands_week
+sensor.tokentracker_rtk_raw_tokens_total
+sensor.tokentracker_rtk_filtered_tokens_total
 ```
 
 For OpenRouter:
@@ -381,28 +280,9 @@ sensor.openwebui_models_today
 sensor.openwebui_output_token_percent_today
 ```
 
-On the display:
-
-- Swipe left/right to change page.
-- Tapping an individual provider screen jumps back to the quadrant page.
-- A short press on the top button pauses/resumes auto-rotate.
-- A long press on the top button turns the display off/on.
-- On the quadrant page you can tap a quadrant to jump to the matching detail
-  page.
-
-## 10. Troubleshooting
+## 7. Troubleshooting
 
 ### Collector sensors are missing
-
-VS Code extension:
-
-- Check that the VSIX is installed and that VS Code has been reloaded.
-- Check the MQTT settings in VS Code.
-- Run `TokenTracker: Publish Now`.
-- Check that the MQTT integration in HA is active.
-- Remember that the extension only runs while VS Code is running.
-
-Python collector:
 
 - Run `.\.venv\Scripts\python.exe collector.py` manually and check the output
   / `python-collector/collector.log` for connection errors.
@@ -410,24 +290,26 @@ Python collector:
 - Check that the MQTT integration in HA is active.
 - Check the scheduled task actually ran: `schtasks /Query /TN
   "TokenTrackerCollector" /V /FO LIST` — `Last Result` should be `0`.
+- If a sensor exists but under a different name than you expected, remember that
+  Home Assistant builds the entity ID from the device name plus the sensor's
+  friendly name, not from the MQTT `object_id`.
 
-### The ESP shows `VS Code offline`
+### The display shows the collector as offline
 
-- Whichever collector you use has not published in more than 10 minutes.
-- VS Code is closed (VS Code extension) or the scheduled task stopped running
-  (Python collector), or MQTT lost connection.
-- Check `sensor.tokentracker_vs_code_updated_at_epoch`.
-- VS Code extension: run `TokenTracker: Publish Now`. Python collector: run
-  `collector.py` manually and check the scheduled task status.
-- While offline the ESP keeps showing the last known values and a `Last HH:MM`
-  timestamp instead of a relative "Upd X min" age.
+- The collector has not published recently.
+- The scheduled task stopped running, or MQTT lost connection.
+- Check `sensor.tokentracker_updated_at_epoch` — it is the freshness signal the
+  display watches.
+- Run `collector.py` manually and check the scheduled task status.
 
-### ESPHome build fails
+### The Claude percentages are stale
 
-- Check ESPHome secrets.
-- Check that `images/` is next to the YAML file.
-- Check that ESPHome can fetch the external component from GitHub.
-- The first flash may need to be done via USB.
+- `collector.log` will show `oauth/usage fetch failed`. The collector then falls
+  back to the last cached response in `~/.claude/claude_rate_limits.json`, so
+  the display holds the previous value rather than dropping to zero.
+- `HTTP Error 401` usually means the OAuth token in
+  `~/.claude/.credentials.json` has expired — run Claude Code once to refresh it.
+- `HTTP Error 429` means the endpoint is rate-limiting the poll.
 
 ### OpenRouter / Open WebUI shows zero
 
@@ -438,23 +320,23 @@ Python collector:
 
 ### Old entities are still around
 
-The VS Code extension tombstones old MQTT discovery entities, but HA can
-sometimes keep disabled/unavailable entities. Remove them manually here:
+Retained MQTT discovery configs outlive the sensors that created them, and HA
+keeps disabled/unavailable entities around. Remove them manually here:
 
 ```text
 Settings -> Devices & services -> Entities
 ```
+
+Anything named `sensor.tokentracker_vs_code_*` is from the retired VS Code
+extension and can go.
 
 ## Updating later
 
 When the repo changes:
 
 1. Pull the latest code.
-2. If using the VS Code extension: build a new VSIX if `vscode-extension/`
-   changed, install it, and reload VS Code.
-3. If using the Python collector: re-run `pip install -r requirements.txt` if
-   `python-collector/requirements.txt` changed. No need to touch the
-   scheduled task unless the script's path changed.
-4. Update ESPHome if `esphome/round-token-tracker.yaml` changed.
-5. Copy the Home Assistant package files again if `homeassistant/packages/`
+2. Re-run `pip install -r requirements.txt` if
+   `python-collector/requirements.txt` changed. No need to touch the scheduled
+   task unless the script's path changed.
+3. Copy the Home Assistant package files again if `homeassistant/packages/`
    changed.

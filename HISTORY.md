@@ -1,5 +1,68 @@
 # History
 
+## 0.7.0 - 2026-08-04
+
+### rtk token savings
+
+- `python-collector/` (version `1.2.0`): publishes eleven new rtk sensors read
+  from `rtk gain --all --format json` (lifetime/today/week saved tokens, savings
+  percent and command counts, plus lifetime raw and filtered token totals).
+  rtk's Monday-Sunday week matches the collector's own week windows.
+  `total_input` = `total_output` + `total_saved`, i.e. raw command output = what
+  reached the model + what [rtk](https://github.com/rtk-ai/rtk) stripped.
+- rtk is optional: the collector resolves the binary with `shutil.which()` and
+  skips both the discovery configs and the payload keys when it is not
+  installed, so non-rtk users do not get a row of permanently-zero entities. Two
+  new `config.json` keys, `rtk_enabled` (default `true`) and `rtk_command`
+  (default `"rtk"`), cover the cases where rtk is installed but unwanted, or
+  installed somewhere off `PATH`.
+- The rtk subprocess call passes `CREATE_NO_WINDOW` on Windows, so the scheduled
+  `pythonw.exe` run does not flash a console window every minute, and decodes
+  output as UTF-8 rather than the ANSI code page.
+- rtk support is **only** in the Python collector. rtk's stats are
+  machine-global and unrelated to VS Code, and the extension's discovery would
+  produce `vs_code`-prefixed entity IDs that would not match.
+- Documented a Home Assistant behaviour that had been misunderstood: HA builds
+  MQTT entity IDs from the **device name plus the sensor's friendly name**, not
+  from `object_id`. That is why `object_id: tokentracker_rtk_input_tokens_total`
+  surfaces as `sensor.tokentracker_rtk_raw_tokens_total`, and why the older
+  sensors are `sensor.tokentracker_*` rather than the `..._vs_code_*` their
+  `object_id`s suggest — the infix came from the extension's old device name.
+
+### The VS Code extension was removed
+
+- `vscode-extension/` is gone. It was no longer installed anywhere, the
+  scheduled Python collector had been the live source for some time, and the
+  extension had not kept up — it published neither the rtk sensors nor the
+  Claude rate-limit sensors.
+- It also actively caused confusion: its MQTT device name was
+  `TokenTracker VS Code`, which is where the `..._vs_code_*` entity IDs came
+  from. Those entities no longer exist in Home Assistant, but several docs in
+  this repo still referenced them; all such references have been corrected to
+  the real `sensor.tokentracker_*` names.
+- Removed the unused `LEGACY_SENSOR_IDS` list from `collector.py` — dead code
+  from a migration that has long since completed.
+- The extension is in the git history if it is ever wanted back.
+
+### Repo split: the display moved out
+
+- **Breaking / structural.** `esphome/` was removed. This repo is now the data
+  pipeline only — collectors plus the Home Assistant packages — and the ESPHome
+  device config lives solely in the private ESPHome repository, where it is
+  actually built and flashed. Keeping a second copy here is what let the repo
+  drift out of step with the hardware.
+- The config that was removed, `esphome/round-token-tracker.yaml`, targeted the
+  466x466 Waveshare AMOLED 1.75. That screen has been repurposed. The live
+  device is now the 240x240 Waveshare ESP32-S3-Touch-LCD-1.28, whose config
+  (`storstugan-office-token-tracker-128.yaml`, version `1.3.0`) gained the same
+  rtk screen plus an rtk savings rate in the middle of the 2x2 overview.
+- The removed AMOLED config was also stale in a way that had gone unnoticed: it
+  subscribed to `sensor.tokentracker_vs_code_*` entities that no longer exist in
+  Home Assistant.
+- Everything the display needs from this repo is the MQTT sensor contract in
+  `README.md`. It is still in the git history if the AMOLED config is ever
+  wanted back.
+
 ## 0.6.0 - 2026-07-08
 
 - `python-collector/` (version `1.1.0`): the collector now publishes the **real**

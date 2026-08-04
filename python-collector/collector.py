@@ -1,4 +1,4 @@
-"""TokenTracker collector: publishes local Codex and Claude Code weekly token
+"""TokenTracker collector: publishes local Codex, Claude Code and rtk token
 usage to Home Assistant via MQTT discovery.
 
 Standalone port of vscode-extension/src/extension.ts's data-reading logic.
@@ -12,7 +12,9 @@ Scheduler) rather than run as a long-lived service.
 import json
 import logging
 import os
+import shutil
 import sqlite3
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -35,6 +37,11 @@ CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
 RATE_LIMIT_CACHE_PATH = Path.home() / ".claude" / "claude_rate_limits.json"
 OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
+# rtk (https://github.com/rtk-ai/rtk) keeps its own lifetime savings stats and
+# exposes them as JSON, so reading it is a plain CLI call rather than a log walk.
+# `--all` adds the daily/weekly/monthly breakdowns on top of the lifetime summary.
+RTK_GAIN_ARGS = ("gain", "--all", "--format", "json")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
@@ -42,29 +49,18 @@ logging.basicConfig(
 )
 log = logging.getLogger("tokentracker")
 
-LEGACY_SENSOR_IDS = [
-    "codex_tokens_left", "codex_usage_percent", "codex_current_thread_tokens",
-    "codex_threads_today", "codex_current_model", "codex_current_thread_title",
-    "claude_tokens_left", "claude_usage_percent", "claude_sessions_today",
-    "claude_current_project", "total_ai_tokens_today", "total_ai_tokens_left",
-    "total_ai_usage_percent", "dominant_tool_today", "collector_status",
-    "collector_version", "collector_updated_at", "codex_tokens_today",
-    "codex_input_tokens_today", "codex_cached_input_tokens_today",
-    "codex_output_tokens_today", "codex_reasoning_output_tokens_today",
-    "claude_tokens_today", "claude_input_tokens_today",
-    "claude_cache_creation_input_tokens_today", "claude_cache_read_input_tokens_today",
-    "claude_output_tokens_today", "codex_tokens_5h", "codex_input_tokens_5h",
-    "codex_cached_input_tokens_5h", "codex_output_tokens_5h",
-    "codex_reasoning_output_tokens_5h", "claude_tokens_5h", "claude_input_tokens_5h",
-    "claude_cache_creation_input_tokens_5h", "claude_cache_read_input_tokens_5h",
-    "claude_output_tokens_5h",
-]
-
 # `id` is the key in the published JSON state payload (value_template source).
-# `object_id` is the Home Assistant entity object_id and MUST match the names
-# the original VS Code extension used, because the ESPHome display
-# (storstugan-office-token-tracker-128) and existing HA dashboards read those
-# `sensor.tokentracker_vs_code_*` entities. Keep the two columns in sync.
+# `object_id` is the MQTT discovery object_id.
+#
+# Note that Home Assistant does NOT derive the entity_id from `object_id` here:
+# it slugs the device name plus the sensor's `name`, so this table's `name`
+# column is what actually determines the entity IDs the display subscribes to.
+# `tokentracker_rtk_input_tokens_total` below, for example, surfaces as
+# `sensor.tokentracker_rtk_raw_tokens_total`. Check the real entity ID in Home
+# Assistant before pointing a display at a newly added sensor.
+#
+# `group` marks the rtk rows as optional: main() only publishes their discovery
+# configs when rtk is actually installed.
 SENSORS = [
     {"id": "updated_at_epoch", "object_id": "tokentracker_vs_code_updated_at_epoch", "name": "Updated At Epoch", "unit": "s", "icon": "mdi:clock-check-outline"},
     {"id": "codex_tokens_week", "object_id": "tokentracker_vs_code_codex_tokens_week", "name": "Codex Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
@@ -86,6 +82,17 @@ SENSORS = [
     {"id": "claude_5h_resets_at", "object_id": "tokentracker_vs_code_claude_code_5h_resets_at", "name": "Claude Code 5h Resets At", "unit": "s", "icon": "mdi:timer-sand"},
     {"id": "claude_weekly_used_percent", "object_id": "tokentracker_vs_code_claude_code_weekly_used_percent", "name": "Claude Code Weekly Used Percent", "unit": "%", "icon": "mdi:gauge-full"},
     {"id": "claude_weekly_resets_at", "object_id": "tokentracker_vs_code_claude_code_weekly_resets_at", "name": "Claude Code Weekly Resets At", "unit": "s", "icon": "mdi:calendar-refresh-outline"},
+    {"group": "rtk", "id": "rtk_saved_tokens_total", "object_id": "tokentracker_rtk_saved_tokens_total", "name": "RTK Saved Tokens Total", "unit": "tokens", "icon": "mdi:content-save-cog-outline"},
+    {"group": "rtk", "id": "rtk_saved_tokens_today", "object_id": "tokentracker_rtk_saved_tokens_today", "name": "RTK Saved Tokens Today", "unit": "tokens", "icon": "mdi:calendar-today"},
+    {"group": "rtk", "id": "rtk_saved_tokens_week", "object_id": "tokentracker_rtk_saved_tokens_week", "name": "RTK Saved Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
+    {"group": "rtk", "id": "rtk_saved_percent_total", "object_id": "tokentracker_rtk_saved_percent_total", "name": "RTK Saved Percent Total", "unit": "%", "icon": "mdi:gauge"},
+    {"group": "rtk", "id": "rtk_saved_percent_today", "object_id": "tokentracker_rtk_saved_percent_today", "name": "RTK Saved Percent Today", "unit": "%", "icon": "mdi:gauge"},
+    {"group": "rtk", "id": "rtk_saved_percent_week", "object_id": "tokentracker_rtk_saved_percent_week", "name": "RTK Saved Percent Week", "unit": "%", "icon": "mdi:gauge-full"},
+    {"group": "rtk", "id": "rtk_commands_total", "object_id": "tokentracker_rtk_commands_total", "name": "RTK Commands Total", "unit": "commands", "icon": "mdi:console"},
+    {"group": "rtk", "id": "rtk_commands_today", "object_id": "tokentracker_rtk_commands_today", "name": "RTK Commands Today", "unit": "commands", "icon": "mdi:console"},
+    {"group": "rtk", "id": "rtk_commands_week", "object_id": "tokentracker_rtk_commands_week", "name": "RTK Commands Week", "unit": "commands", "icon": "mdi:console"},
+    {"group": "rtk", "id": "rtk_input_tokens_total", "object_id": "tokentracker_rtk_input_tokens_total", "name": "RTK Raw Tokens Total", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
+    {"group": "rtk", "id": "rtk_output_tokens_total", "object_id": "tokentracker_rtk_output_tokens_total", "name": "RTK Filtered Tokens Total", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
 ]
 
 
@@ -448,7 +455,80 @@ def read_claude_rate_limits() -> dict:
     return {key: numeric(cached.get(key)) for key in empty_claude_rate_limits()}
 
 
-def build_payload(config: dict) -> dict:
+def empty_rtk_usage() -> dict:
+    return {
+        "rtk_saved_tokens_total": 0, "rtk_saved_tokens_today": 0, "rtk_saved_tokens_week": 0,
+        "rtk_saved_percent_total": 0, "rtk_saved_percent_today": 0, "rtk_saved_percent_week": 0,
+        "rtk_commands_total": 0, "rtk_commands_today": 0, "rtk_commands_week": 0,
+        "rtk_input_tokens_total": 0, "rtk_output_tokens_total": 0,
+    }
+
+
+def rtk_binary(config: dict) -> str | None:
+    """Resolved path to the rtk executable, or None when rtk is disabled or not
+    installed. Absence is not an error: rtk is an optional extra, so the collector
+    simply omits its sensors instead of publishing a row of zeroes."""
+    if not config.get("rtk_enabled", True):
+        return None
+    return shutil.which(config.get("rtk_command", "rtk"))
+
+
+def read_rtk_usage(binary: str) -> dict:
+    """Token savings reported by `rtk gain --all --format json`.
+
+    The summary block is lifetime; `daily`/`weekly` only contain buckets that saw
+    activity, so a missing row for today genuinely means zero commands today. rtk
+    counts a week as Monday-Sunday, matching this collector's own week windows.
+    """
+    completed = subprocess.run(
+        [binary, *RTK_GAIN_ARGS],
+        capture_output=True,
+        text=True,
+        # rtk writes UTF-8; without this Python would decode using the Windows
+        # ANSI code page and mangle any non-ASCII path in the output.
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+        # The scheduled task runs under pythonw.exe precisely to avoid console
+        # windows, so don't let the child pop one up every minute. The flag only
+        # exists on Windows; everywhere else this is a no-op 0.
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if completed.returncode != 0:
+        log.warning("rtk gain exited %d: %s", completed.returncode, completed.stderr.strip())
+        return empty_rtk_usage()
+
+    report = json.loads(completed.stdout)
+    summary = report.get("summary") or {}
+    today = datetime.now().strftime("%Y-%m-%d")
+    daily = next((row for row in report.get("daily") or [] if row.get("date") == today), {})
+    # ISO dates compare correctly as plain strings, so no parsing is needed to find
+    # the week bucket that contains today.
+    weekly = next(
+        (
+            row for row in report.get("weekly") or []
+            if str(row.get("week_start", "")) <= today <= str(row.get("week_end", ""))
+        ),
+        {},
+    )
+
+    return {
+        "rtk_saved_tokens_total": numeric(summary.get("total_saved")),
+        "rtk_saved_tokens_today": numeric(daily.get("saved_tokens")),
+        "rtk_saved_tokens_week": numeric(weekly.get("saved_tokens")),
+        "rtk_saved_percent_total": round(numeric(summary.get("avg_savings_pct")), 1),
+        "rtk_saved_percent_today": round(numeric(daily.get("savings_pct")), 1),
+        "rtk_saved_percent_week": round(numeric(weekly.get("savings_pct")), 1),
+        "rtk_commands_total": numeric(summary.get("total_commands")),
+        "rtk_commands_today": numeric(daily.get("commands")),
+        "rtk_commands_week": numeric(weekly.get("commands")),
+        "rtk_input_tokens_total": numeric(summary.get("total_input")),
+        "rtk_output_tokens_total": numeric(summary.get("total_output")),
+    }
+
+
+def build_payload(config: dict, rtk_bin: str | None) -> dict:
     now = datetime.now().astimezone()
     payload = {
         "updated_at": now.isoformat(),
@@ -471,6 +551,12 @@ def build_payload(config: dict) -> dict:
         except Exception as error:  # noqa: BLE001
             log.error("Claude rate-limit read failed: %s", error)
             payload.update(empty_claude_rate_limits())
+    if rtk_bin:
+        try:
+            payload.update(read_rtk_usage(rtk_bin))
+        except Exception as error:  # noqa: BLE001
+            log.error("rtk read failed: %s", error)
+            payload.update(empty_rtk_usage())
     return payload
 
 
@@ -501,7 +587,11 @@ def main() -> None:
     state_prefix = mqtt_cfg.get("state_prefix", "tokentracker")
     state_topic = f"{state_prefix}/state"
 
-    payload = build_payload(config)
+    rtk_bin = rtk_binary(config)
+    payload = build_payload(config, rtk_bin)
+    # Skip the rtk discovery configs entirely when rtk is not in use, so those
+    # entities never show up as permanently-zero sensors in Home Assistant.
+    sensors = [sensor for sensor in SENSORS if sensor.get("group") != "rtk" or rtk_bin]
 
     client = mqtt.Client(client_id=f"tokentracker-python-{os.environ.get('COMPUTERNAME', 'host')}")
     if mqtt_cfg.get("username"):
@@ -509,7 +599,7 @@ def main() -> None:
     client.connect(parsed.hostname, parsed.port or 1883, keepalive=30)
     client.loop_start()
     try:
-        for sensor in SENSORS:
+        for sensor in sensors:
             topic = f"{discovery_prefix}/sensor/{sensor['object_id']}/config"
             client.publish(topic, json.dumps(discovery_payload(sensor, state_topic)), qos=0, retain=True)
         client.publish(state_topic, json.dumps(payload), qos=0, retain=True)

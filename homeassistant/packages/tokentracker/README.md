@@ -3,18 +3,19 @@
 Package version: `1.2.1`
 
 This package contains Home Assistant REST/template sensors for the parts that
-do not come from the VS Code extension:
+do not come from the local collector:
 
 - OpenRouter credits, account balance, multi-key usage and activity token
   history.
 - Open WebUI usage/statistics including input/output tokens, model count and
   today's I/O percent.
 
-Codex and Claude Code come from the VS Code extension via MQTT discovery:
+Codex, Claude Code and rtk come from `python-collector/` via MQTT discovery:
 
-- `sensor.tokentracker_vs_code_codex_tokens_week`
-- `sensor.tokentracker_vs_code_claude_code_tokens_week`
-- `sensor.tokentracker_vs_code_updated_at_epoch`
+- `sensor.tokentracker_codex_tokens_week`
+- `sensor.tokentracker_claude_code_tokens_week`
+- `sensor.tokentracker_rtk_saved_tokens_total`
+- `sensor.tokentracker_updated_at_epoch`
 
 The ESPHome display then uses these raw values together with its own config
 entities for 5h periods, max values, tokens remaining and percent.

@@ -1,41 +1,56 @@
 # TokenTracker Python Collector
 
-Version: 1.0.1
+Version: 1.2.0
 
-Standalone alternative to `vscode-extension/`. Publishes the same local Codex
-and Claude Code weekly token counters to Home Assistant via MQTT discovery,
-but as a plain Python script instead of a VS Code extension, so it keeps
-running whether Claude Code / Codex are used through VS Code, a CLI, or a
-desktop app. Pick **one** of the two collectors, not both (running both at
-once is harmless — they publish to the same retained topics — but redundant).
+Token Tracker's collector. Publishes local Codex, Claude Code and rtk usage to
+Home Assistant via MQTT discovery. It reads the session logs those tools write
+anyway, so it works whether they run through a CLI, a desktop app, or an editor.
 
-It publishes the same sensors as the extension:
+A VS Code extension used to be an alternative collector; it was retired in 0.7.0
+and this is now the only one.
 
-- `sensor.tokentracker_vs_code_codex_tokens_week`
-- `sensor.tokentracker_vs_code_codex_input_tokens_week`
-- `sensor.tokentracker_vs_code_codex_cached_input_tokens_week`
-- `sensor.tokentracker_vs_code_codex_output_tokens_week`
-- `sensor.tokentracker_vs_code_codex_reasoning_output_tokens_week`
-- `sensor.tokentracker_vs_code_codex_5h_used_percent`
-- `sensor.tokentracker_vs_code_codex_5h_resets_at`
-- `sensor.tokentracker_vs_code_codex_weekly_used_percent`
-- `sensor.tokentracker_vs_code_codex_weekly_resets_at`
-- `sensor.tokentracker_vs_code_codex_plan_type`
-- `sensor.tokentracker_vs_code_claude_code_tokens_week`
-- `sensor.tokentracker_vs_code_claude_code_input_tokens_week`
-- `sensor.tokentracker_vs_code_claude_code_cache_creation_tokens_week`
-- `sensor.tokentracker_vs_code_claude_code_cache_read_tokens_week`
-- `sensor.tokentracker_vs_code_claude_code_output_tokens_week`
-- `sensor.tokentracker_vs_code_updated_at_epoch`
+It publishes:
 
-The entity IDs still say `vs_code` on purpose — that keeps the same Home
-Assistant entities regardless of which collector publishes to them, so
-`esphome/round-token-tracker.yaml` and the Home Assistant packages need no
-changes when switching collectors.
+- `sensor.tokentracker_codex_tokens_week`
+- `sensor.tokentracker_codex_input_tokens_week`
+- `sensor.tokentracker_codex_cached_input_tokens_week`
+- `sensor.tokentracker_codex_output_tokens_week`
+- `sensor.tokentracker_codex_reasoning_output_tokens_week`
+- `sensor.tokentracker_codex_5h_used_percent`
+- `sensor.tokentracker_codex_5h_resets_at`
+- `sensor.tokentracker_codex_weekly_used_percent`
+- `sensor.tokentracker_codex_weekly_resets_at`
+- `sensor.tokentracker_codex_plan_type`
+- `sensor.tokentracker_claude_code_tokens_week`
+- `sensor.tokentracker_claude_code_input_tokens_week`
+- `sensor.tokentracker_claude_code_cache_creation_tokens_week`
+- `sensor.tokentracker_claude_code_cache_read_tokens_week`
+- `sensor.tokentracker_claude_code_output_tokens_week`
+- `sensor.tokentracker_updated_at_epoch`
+
+Plus eleven sensors for [rtk](https://github.com/rtk-ai/rtk):
+
+- `sensor.tokentracker_rtk_saved_tokens_total`
+- `sensor.tokentracker_rtk_saved_tokens_today`
+- `sensor.tokentracker_rtk_saved_tokens_week`
+- `sensor.tokentracker_rtk_saved_percent_total`
+- `sensor.tokentracker_rtk_saved_percent_today`
+- `sensor.tokentracker_rtk_saved_percent_week`
+- `sensor.tokentracker_rtk_commands_total`
+- `sensor.tokentracker_rtk_commands_today`
+- `sensor.tokentracker_rtk_commands_week`
+- `sensor.tokentracker_rtk_raw_tokens_total`
+- `sensor.tokentracker_rtk_filtered_tokens_total`
+
+Home Assistant derives these entity IDs from the device name plus each sensor's
+friendly name, **not** from the MQTT `object_id` — which is why the sensor whose
+`object_id` is `tokentracker_rtk_input_tokens_total` shows up as
+`sensor.tokentracker_rtk_raw_tokens_total`. Check the real name in Home
+Assistant before pointing a display at a newly added sensor.
 
 ## Data sources
 
-Same as the extension:
+Codex and Claude Code:
 
 - Codex: reads `~/.codex/sessions/**/*.jsonl` (`rollout-*.jsonl`), sums
   `token_count` deltas for the current week, and falls back to
@@ -47,7 +62,17 @@ Same as the extension:
   `usage.cache_read_input_tokens` for events from the current week (Monday
   00:00 local time).
 
-Unlike the extension, this script does **not** run continuously. It is meant
+And rtk:
+
+- rtk: runs `rtk gain --all --format json` and maps the lifetime `summary`
+  block plus the `daily` row for today and the `weekly` row containing today.
+  rtk maintains these stats itself, so this is a plain CLI read rather than a
+  log walk. rtk's week runs Monday-Sunday, same as the windows above.
+  `total_input` = `total_output` + `total_saved`, i.e. raw command output = what
+  actually reached the model + what rtk stripped; the display's Sent/Saved bar
+  is that split.
+
+This script does **not** run continuously. It is meant
 to be invoked periodically (e.g. every minute) by an external scheduler —
 connect, publish, disconnect — since there is no long-lived host process like
 VS Code to keep it alive.
@@ -82,9 +107,19 @@ Copy-Item config.example.json config.json
     "state_prefix": "tokentracker"
   },
   "codex_enabled": true,
-  "claude_enabled": true
+  "claude_enabled": true,
+  "rtk_enabled": true,
+  "rtk_command": "rtk"
 }
 ```
+
+rtk needs no setup: the collector resolves `rtk_command` with `shutil.which()`
+and, when it finds nothing, publishes neither the rtk discovery configs nor the
+rtk payload keys — so a machine without rtk never grows eleven zero-valued
+entities. Set `"rtk_enabled": false` to skip rtk even when it is installed, or
+point `"rtk_command"` at an absolute path if rtk is not on the `PATH` that your
+scheduler hands the script (Task Scheduler does not always inherit your
+interactive `PATH`).
 
 ### 3. Test it once
 
@@ -95,7 +130,7 @@ Copy-Item config.example.json config.json
 This should print/log a `Published: {...}` line with your current weekly
 token counts, and `collector.log` (next to the script, rotated at 1 MB × 2
 backups) should show the same. Within a minute or so Home Assistant should
-show the `sensor.tokentracker_vs_code_*` entities updating.
+show the `sensor.tokentracker_*` entities updating.
 
 ### 4. Schedule it to run every minute
 
