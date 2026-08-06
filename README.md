@@ -51,12 +51,34 @@ display compute maxima, remaining amounts and percentages.
 | Open WebUI | `sensor.openwebui_tokens_today` | The HA REST package fetches tokens for today from Open WebUI analytics |
 | OpenRouter | `sensor.openrouter_balance_remaining`, `sensor.openrouter_usage_percent` | The HA REST package fetches account credits and usage from OpenRouter |
 | rtk | `sensor.tokentracker_rtk_saved_tokens_total` and ten more `tokentracker_rtk_*` | The Python collector runs `rtk gain --all --format json` and publishes the savings summary |
+| Collector health | `sensor.tokentracker_status`, `sensor.tokentracker_problem`, `sensor.tokentracker_problem_count` | The collector reports on itself, so a frozen number is distinguishable from a healthy one |
 
 For Codex the collector also forwards the live `rate_limits` block from the
-rollout sessions (`primary` = current 5h window percent + reset epoch,
-`secondary` = weekly window percent + reset epoch, plus `plan_type`). Claude's
-equivalent comes from the authenticated `/api/oauth/usage` endpoint, which is
-the same source Claude Code itself uses.
+rollout sessions, plus `plan_type`. Which window lands in which slot depends on
+the plan, so the collector classifies each by its own `window_minutes` rather
+than by position: an individual plan sends the 5h window as `primary` and the
+weekly as `secondary`, but a **team plan sends a single weekly window as
+`primary` and leaves `secondary` null**. Reading by position put team weekly
+usage in the 5h sensor and left the weekly sensor at 0. On a team plan
+`codex_5h_*` is legitimately 0 — there is no such window — so a consumer should
+check `plan_type` before showing it. Claude's equivalent comes from the
+authenticated `/api/oauth/usage` endpoint, which is the same source Claude Code
+itself uses.
+
+### Collector health
+
+`sensor.tokentracker_status` is `ok`, `degraded` or `error`.
+`sensor.tokentracker_problem` is the text to show — it names the remediation,
+not just the symptom (`Claude login lost: run claude then /login`), with errors
+ordered ahead of warnings and the whole thing capped at Home Assistant's 255
+character state limit. It reads `OK` when nothing is wrong, never an empty
+string, since empty would arrive as `unknown` and look identical to a collector
+that never ran.
+
+The text is reduced to the glyph set the ESPHome display builds its fonts with
+(see `DISPLAY_GLYPHS` in `collector.py`). A character outside that set renders as
+nothing on the device and would silently eat part of the message, so if you
+change the display's `glyphs:` line, change that constant to match.
 
 `claude_tokens_week` deliberately excludes cache-read tokens: they dwarf
 everything else (often >95% of the raw sum) and are billed at roughly 0.1x, so

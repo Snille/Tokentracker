@@ -1,5 +1,52 @@
 # History
 
+## 0.8.0 - 2026-08-06
+
+### Codex rate limits were being read out of the wrong slot
+
+- `python-collector/` (version `1.3.0`): `rate_limits_to_payload()` now classifies
+  each Codex rate-limit window by its own `window_minutes` instead of by its
+  position in the payload. A **team plan has no 5h window at all** — it sends a
+  single *weekly* window as `primary` and leaves `secondary` null — so the old
+  positional mapping filed team weekly usage under `codex_5h_used_percent` and
+  left `codex_weekly_used_percent` stuck at 0. The tell was
+  `codex_5h_resets_at` pointing five days out, which is impossible for a
+  five-hour window. Windows of 720 minutes or less are the 5h one, longer is
+  weekly; a payload without `window_minutes` falls back to the old guess.
+- On a team plan `codex_5h_*` is now legitimately 0, because the window does not
+  exist. Consumers should check `codex_plan_type` before showing it.
+
+### The collector now reports on itself
+
+- Three new sensors — `sensor.tokentracker_status` (`ok`/`degraded`/`error`),
+  `sensor.tokentracker_problem` and `sensor.tokentracker_problem_count` — so a
+  frozen number is distinguishable from a healthy one. Problem text names the
+  remediation rather than the symptom, errors sort ahead of warnings, and it
+  reads `OK` rather than an empty string, which Home Assistant would show as
+  `unknown` and which looks identical to a collector that never ran.
+- Problem text is reduced to `DISPLAY_GLYPHS`, mirroring the `glyphs:` list the
+  ESPHome display builds its fonts from. A character outside that set draws as
+  nothing on the device and would silently eat part of the message.
+
+### Why a dropped Claude login went unnoticed for nine hours
+
+- A missing, unparseable or **blank** `accessToken` is now logged. Claude Code
+  rewrites `.credentials.json` with empty token strings when its login is
+  dropped, keeping the surrounding metadata; that case previously returned
+  `None` silently, so the collector republished a stale cache with nothing in
+  the log to say why.
+- Falls back to the canonical credentials copy in the central secret store when
+  the runtime file is blanked. It is a backup rather than a live source, so its
+  token expires too — it buys a diagnosable error instead of silence.
+- The rate-limit cache gained a `fetched_at`, and serving one older than an hour
+  is logged.
+- `/api/oauth/usage` is still asked once a minute. It answers HTTP 429 most of
+  the time at that rate, but measured over two days of logs 23–43% of requests
+  still get through, so a refresh lands every few minutes — better freshness
+  than any slower fixed interval, since a rarer request is not a likelier one.
+  Those 429s are therefore logged at INFO; everything else stays a warning, so a
+  real 401 is visible instead of buried in hundreds of look-alikes.
+
 ## 0.7.0 - 2026-08-04
 
 ### rtk token savings

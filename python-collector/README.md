@@ -1,6 +1,6 @@
 # TokenTracker Python Collector
 
-Version: 1.2.0
+Version: 1.3.0
 
 Token Tracker's collector. Publishes local Codex, Claude Code and rtk usage to
 Home Assistant via MQTT discovery. It reads the session logs those tools write
@@ -26,7 +26,17 @@ It publishes:
 - `sensor.tokentracker_claude_code_cache_creation_tokens_week`
 - `sensor.tokentracker_claude_code_cache_read_tokens_week`
 - `sensor.tokentracker_claude_code_output_tokens_week`
+- `sensor.tokentracker_claude_code_5h_used_percent`
+- `sensor.tokentracker_claude_code_5h_resets_at`
+- `sensor.tokentracker_claude_code_weekly_used_percent`
+- `sensor.tokentracker_claude_code_weekly_resets_at`
 - `sensor.tokentracker_updated_at_epoch`
+
+Plus three sensors reporting on the collector itself:
+
+- `sensor.tokentracker_status` — `ok`, `degraded` or `error`
+- `sensor.tokentracker_problem` — the text to show, naming the remediation
+- `sensor.tokentracker_problem_count`
 
 Plus eleven sensors for [rtk](https://github.com/rtk-ai/rtk):
 

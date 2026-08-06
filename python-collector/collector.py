@@ -33,9 +33,54 @@ LOG_PATH = Path(__file__).with_name("collector.log")
 # is the same source Claude Code itself uses (its `fetchUtilization`). Querying it
 # directly makes the % fully headless — no statusline, no terminal session, works
 # regardless of whether Claude Code runs via the desktop app, CLI, or not at all.
+# Claude Code's live credentials, refreshed in place whenever the CLI runs. This
+# is the runtime copy and the primary source.
 CREDENTIALS_PATH = Path.home() / ".claude" / ".credentials.json"
+# Fallback: the canonical copy in the central secret store, per the house rule
+# that every credential has a verified copy under C:\Users\eripet\Coding\_secrets_.
+#   SECRET_REF: C:\Users\eripet\Coding\_secrets_\claude-code\.credentials.json
+# The runtime file gets blanked (accessToken set to "") when the CLI login is
+# dropped, which is exactly when the fallback earns its keep. It is a backup, not
+# a live source, so its token expires like any other -- it buys a diagnosable
+# error instead of silence, not immunity from re-login.
+CANONICAL_CREDENTIALS_PATH = (
+    Path.home() / "Coding" / "_secrets_" / "claude-code" / ".credentials.json"
+)
 RATE_LIMIT_CACHE_PATH = Path.home() / ".claude" / "claude_rate_limits.json"
 OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+
+# Home Assistant caps a sensor's state at 255 characters; anything longer is
+# rejected outright, so the problem sensor truncates rather than losing the state.
+MAX_STATE_LENGTH = 255
+# The ESPHome display builds its fonts with an explicit glyph list, and a
+# character outside it renders as nothing -- silently eating part of the message.
+# Problem text is therefore reduced to this set, which mirrors the `glyphs:` line
+# in storstugan-office-token-tracker-128.yaml. Keep the two in step.
+DISPLAY_GLYPHS = set(
+    "!%()+,-_.:/0123456789"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖ"
+    "abcdefghijklmnopqrstuvwxyzåäö"
+    "$€ "
+)
+# Separator between problems. Space-slash-space is in the glyph set; the more
+# obvious "|" is not.
+PROBLEM_SEPARATOR = " / "
+# What the problem sensor reads when there is nothing wrong. An empty string would
+# land in Home Assistant as `unknown`, which is indistinguishable from a collector
+# that never ran -- exactly the confusion these sensors exist to remove.
+NO_PROBLEM = "OK"
+
+# /api/oauth/usage is asked on every run, once a minute. It answers HTTP 429 most
+# of the time at that rate, but measured over two days of logs it still lets
+# 23-43% of requests through, so a refresh lands every few minutes -- better
+# freshness than any slower fixed interval would give, since a rarer request is
+# not a likelier one. The 429s are therefore expected noise covered by the cache,
+# and are logged at INFO; anything else stays a warning.
+
+# How long a cached response may keep being republished before the log starts
+# saying so. Past this the sensors are showing yesterday's numbers, which looks
+# identical to "nothing is happening" from Home Assistant.
+OAUTH_USAGE_STALE_SECONDS = 3600
 
 # rtk (https://github.com/rtk-ai/rtk) keeps its own lifetime savings stats and
 # exposes them as JSON, so reading it is a plain CLI call rather than a log walk.
@@ -63,6 +108,12 @@ log = logging.getLogger("tokentracker")
 # configs when rtk is actually installed.
 SENSORS = [
     {"id": "updated_at_epoch", "object_id": "tokentracker_vs_code_updated_at_epoch", "name": "Updated At Epoch", "unit": "s", "icon": "mdi:clock-check-outline"},
+    # Collector health. `Status` is the one to drive an icon or colour from
+    # (ok/degraded/error); `Problem` carries the text to show, already ordered so
+    # the problem needing a human comes first.
+    {"id": "collector_status", "object_id": "tokentracker_status", "name": "Status", "icon": "mdi:heart-pulse"},
+    {"id": "collector_problem", "object_id": "tokentracker_problem", "name": "Problem", "icon": "mdi:alert-circle-outline"},
+    {"id": "collector_problem_count", "object_id": "tokentracker_problem_count", "name": "Problem Count", "unit": "problems", "icon": "mdi:counter"},
     {"id": "codex_tokens_week", "object_id": "tokentracker_vs_code_codex_tokens_week", "name": "Codex Tokens Week", "unit": "tokens", "icon": "mdi:calendar-week"},
     {"id": "codex_input_tokens_week", "object_id": "tokentracker_vs_code_codex_input_tokens_week", "name": "Codex Input Tokens Week", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
     {"id": "codex_cached_input_tokens_week", "object_id": "tokentracker_vs_code_codex_cached_input_tokens_week", "name": "Codex Cached Input Tokens Week", "unit": "tokens", "icon": "mdi:cached"},
@@ -94,6 +145,56 @@ SENSORS = [
     {"group": "rtk", "id": "rtk_input_tokens_total", "object_id": "tokentracker_rtk_input_tokens_total", "name": "RTK Raw Tokens Total", "unit": "tokens", "icon": "mdi:arrow-down-bold-circle-outline"},
     {"group": "rtk", "id": "rtk_output_tokens_total", "object_id": "tokentracker_rtk_output_tokens_total", "name": "RTK Filtered Tokens Total", "unit": "tokens", "icon": "mdi:arrow-up-bold-circle-outline"},
 ]
+
+
+# Problems found during one run, oldest first. Collected rather than only logged,
+# so Home Assistant can show what is wrong and what to do about it: a frozen
+# sensor is otherwise indistinguishable from a quiet one, which is what let a
+# dropped Claude login sit unnoticed for nine hours.
+PROBLEMS: list[tuple[str, str]] = []
+
+
+def display_safe(text: str) -> str:
+    """`text` reduced to characters the display can actually draw.
+
+    Anything outside the font's glyph list becomes a space, and runs of spaces
+    collapse, so a stray backtick or an exception's punctuation cannot silently
+    swallow part of the message on the screen.
+    """
+    cleaned = "".join(ch if ch in DISPLAY_GLYPHS else " " for ch in text)
+    return " ".join(cleaned.split())
+
+
+def report_problem(severity: str, text: str) -> None:
+    """Register a short, user-facing problem for the status sensors.
+
+    `severity` is "error" (something needs a human) or "warn" (degraded but
+    self-healing). `text` should name the fix, not just the symptom -- it is what
+    the display will show. Duplicates are dropped so one run reports each distinct
+    problem once.
+    """
+    entry = (severity, display_safe(text))
+    if entry not in PROBLEMS:
+        PROBLEMS.append(entry)
+
+
+def status_payload() -> dict:
+    """The three status sensors, derived from whatever `PROBLEMS` holds."""
+    if not PROBLEMS:
+        return {
+            "collector_status": "ok",
+            "collector_problem": NO_PROBLEM,
+            "collector_problem_count": 0,
+        }
+    # Errors first: with several problems at once, the one needing a human should
+    # be the one the display has room for.
+    ordered = [text for severity, text in PROBLEMS if severity == "error"]
+    ordered += [text for severity, text in PROBLEMS if severity != "error"]
+    return {
+        "collector_status": "error" if any(s == "error" for s, _ in PROBLEMS) else "degraded",
+        "collector_problem": PROBLEM_SEPARATOR.join(ordered)[:MAX_STATE_LENGTH],
+        "collector_problem_count": len(PROBLEMS),
+    }
 
 
 def load_config() -> dict:
@@ -150,17 +251,44 @@ def has_usable_rate_limits(rate_limits) -> bool:
     return bool(rate_limits.get("primary")) or bool(rate_limits.get("secondary"))
 
 
+# A window this long or shorter is the short (5h) limit; anything longer is the
+# weekly one. Real values seen are 300 minutes (5h) and 10080 (7 days), so the
+# threshold sits far from both.
+CODEX_SHORT_WINDOW_MAX_MINUTES = 720
+
+
 def rate_limits_to_payload(rate_limits) -> dict:
+    """Map Codex's `primary`/`secondary` rate-limit windows onto the sensors.
+
+    Which window lands in which slot depends on the plan, so position cannot be
+    trusted: an individual plan sends the 5h window as `primary` and the weekly as
+    `secondary`, but a team plan sends a single *weekly* window as `primary` and
+    leaves `secondary` null. Reading by position filed team weekly usage under the
+    5h sensor and left the weekly sensor stuck at 0. Classify each window by its
+    own `window_minutes` instead, falling back to the positional guess only when
+    the field is absent.
+    """
     rate_limits = rate_limits or {}
-    primary = rate_limits.get("primary") or {}
-    secondary = rate_limits.get("secondary") or {}
-    return {
-        "codex_5h_used_percent": numeric(primary.get("used_percent")),
-        "codex_5h_resets_at": numeric(primary.get("resets_at")),
-        "codex_weekly_used_percent": numeric(secondary.get("used_percent")),
-        "codex_weekly_resets_at": numeric(secondary.get("resets_at")),
-        "codex_plan_type": rate_limits.get("plan_type") if isinstance(rate_limits.get("plan_type"), str) else "",
+    plan_type = rate_limits.get("plan_type")
+    payload = {
+        "codex_5h_used_percent": 0,
+        "codex_5h_resets_at": 0,
+        "codex_weekly_used_percent": 0,
+        "codex_weekly_resets_at": 0,
+        "codex_plan_type": plan_type if isinstance(plan_type, str) else "",
     }
+    for slot, positional in (("primary", "5h"), ("secondary", "weekly")):
+        window = rate_limits.get(slot)
+        if not isinstance(window, dict):
+            continue
+        minutes = numeric(window.get("window_minutes"))
+        if minutes:
+            key = "5h" if minutes <= CODEX_SHORT_WINDOW_MAX_MINUTES else "weekly"
+        else:
+            key = positional
+        payload[f"codex_{key}_used_percent"] = numeric(window.get("used_percent"))
+        payload[f"codex_{key}_resets_at"] = numeric(window.get("resets_at"))
+    return payload
 
 
 def codex_usage_delta(current: dict, previous: dict | None) -> dict:
@@ -391,14 +519,50 @@ def _iso_to_epoch(value) -> float:
         return 0
 
 
-def _oauth_access_token() -> str | None:
+def _token_from(path: Path) -> str | None:
+    """The `claudeAiOauth.accessToken` in one credentials file, or None.
+
+    A blank `accessToken` is a real state, not just a missing file: Claude Code
+    rewrites the credentials file with empty token strings when the CLI login is
+    dropped, keeping the surrounding metadata. That case used to return None
+    silently, so the collector went on republishing a stale cache with nothing in
+    the log to say why -- indistinguishable from a healthy run.
+    """
     try:
-        with open(CREDENTIALS_PATH, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError:
+        return None
+    except json.JSONDecodeError as error:
+        log.warning("Claude credentials at %s are not valid JSON: %s", path, error)
         return None
     token = (data.get("claudeAiOauth") or {}).get("accessToken")
     return token if isinstance(token, str) and token else None
+
+
+def _oauth_access_token() -> str | None:
+    """The OAuth access token to authenticate /api/oauth/usage with, or None.
+
+    Prefers the live credentials Claude Code maintains; falls back to the
+    canonical copy in the central secret store. Exhausting both is logged, since
+    it means the rate-limit sensors are about to freeze.
+    """
+    for path in (CREDENTIALS_PATH, CANONICAL_CREDENTIALS_PATH):
+        token = _token_from(path)
+        if token:
+            if path is CANONICAL_CREDENTIALS_PATH:
+                log.info("using canonical credentials copy: %s", path)
+                report_problem("warn", "Claude: using backup credentials, refresh _secrets_ copy")
+            return token
+    log.warning(
+        "no usable Claude accessToken in %s or %s -- rate-limit percentages stay "
+        "frozen until the Claude Code CLI is logged in again (run `claude` in a "
+        "terminal, then /login)",
+        CREDENTIALS_PATH,
+        CANONICAL_CREDENTIALS_PATH,
+    )
+    report_problem("error", "Claude login lost: run claude then /login")
+    return None
 
 
 def fetch_claude_oauth_usage() -> dict | None:
@@ -420,6 +584,16 @@ def fetch_claude_oauth_usage() -> dict | None:
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             body = json.load(resp)
+    except urllib.error.HTTPError as error:
+        # 429 is the normal cost of asking every minute; the cache covers it and
+        # the next run usually gets through. Keeping it out of WARNING is what
+        # makes a real 401 visible instead of buried in hundreds of look-alikes.
+        log.log(
+            logging.INFO if error.code == 429 else logging.WARNING,
+            "oauth/usage fetch failed: %s",
+            error,
+        )
+        return None
     except (urllib.error.URLError, OSError, json.JSONDecodeError) as error:
         log.warning("oauth/usage fetch failed: %s", error)
         return None
@@ -433,25 +607,66 @@ def fetch_claude_oauth_usage() -> dict | None:
     }
 
 
-def read_claude_rate_limits() -> dict:
-    """Real Claude subscription rate-limit % for the display. Primary source is the
-    authenticated `/api/oauth/usage` endpoint (headless — no statusline/terminal).
-    On failure (token expired while Claude Code is idle, or offline) fall back to
-    the last cached response so the display holds the last known value instead of
-    dropping to 0; the display's `resets_at` gating still zeroes a window once it
-    actually rolls over."""
-    fresh = fetch_claude_oauth_usage()
-    if fresh is not None:
-        try:
-            RATE_LIMIT_CACHE_PATH.write_text(json.dumps(fresh), encoding="utf-8")
-        except OSError:
-            pass
-        return fresh
+def _read_rate_limit_cache() -> tuple[dict, float]:
+    """The cached `/api/oauth/usage` response and the epoch it was fetched at.
+
+    Returns `({}, 0)` when there is no usable cache. Caches written before
+    `fetched_at` existed report age 0, so they are treated as stale and refetched.
+    """
     try:
         with open(RATE_LIMIT_CACHE_PATH, "r", encoding="utf-8") as f:
             cached = json.load(f)
     except (OSError, json.JSONDecodeError):
+        return {}, 0
+    if not isinstance(cached, dict):
+        return {}, 0
+    return cached, numeric(cached.get("fetched_at"))
+
+
+def read_claude_rate_limits() -> dict:
+    """Real Claude subscription rate-limit % for the display. Primary source is the
+    authenticated `/api/oauth/usage` endpoint (headless — no statusline/terminal).
+
+    The endpoint is asked on every run. On failure (rate-limited, or the token
+    expired or was cleared while Claude Code sat idle, or offline) the last cached
+    response is served so the display holds the last known value instead of
+    dropping to 0. A cache that keeps being served past
+    `OAUTH_USAGE_STALE_SECONDS` is logged, because frozen sensors otherwise look
+    exactly like a healthy collector from Home Assistant's side.
+    """
+    cached, fetched_at = _read_rate_limit_cache()
+    now = datetime.now().timestamp()
+    age = now - fetched_at if fetched_at else None
+
+    fresh = fetch_claude_oauth_usage()
+    if fresh is not None:
+        try:
+            RATE_LIMIT_CACHE_PATH.write_text(
+                json.dumps({**fresh, "fetched_at": int(now)}), encoding="utf-8"
+            )
+        except OSError as error:
+            log.warning("could not write rate-limit cache: %s", error)
+        return fresh
+
+    if not cached:
+        log.warning("no cached rate limits to fall back on; publishing zeroes")
+        report_problem("error", "Claude usage % unavailable and never cached")
         return empty_claude_rate_limits()
+    if age is None or age > OAUTH_USAGE_STALE_SECONDS:
+        when = (
+            datetime.fromtimestamp(fetched_at).isoformat(timespec="seconds")
+            if fetched_at else "unknown"
+        )
+        log.warning(
+            "serving stale Claude rate limits (last refreshed %s); the %% sensors "
+            "are frozen until a fetch succeeds",
+            when,
+        )
+        hours = int(age // 3600) if age else None
+        report_problem(
+            "warn",
+            f"Claude usage % frozen for {hours}h" if hours else "Claude usage % frozen",
+        )
     return {key: numeric(cached.get(key)) for key in empty_claude_rate_limits()}
 
 
@@ -497,6 +712,7 @@ def read_rtk_usage(binary: str) -> dict:
     )
     if completed.returncode != 0:
         log.warning("rtk gain exited %d: %s", completed.returncode, completed.stderr.strip())
+        report_problem("warn", f"rtk gain exited {completed.returncode}")
         return empty_rtk_usage()
 
     report = json.loads(completed.stdout)
@@ -529,6 +745,7 @@ def read_rtk_usage(binary: str) -> dict:
 
 
 def build_payload(config: dict, rtk_bin: str | None) -> dict:
+    PROBLEMS.clear()
     now = datetime.now().astimezone()
     payload = {
         "updated_at": now.isoformat(),
@@ -539,24 +756,30 @@ def build_payload(config: dict, rtk_bin: str | None) -> dict:
             payload.update(read_codex_usage())
         except Exception as error:  # noqa: BLE001 - best-effort collector, mirrors extension.ts behaviour
             log.error("Codex read failed: %s", error)
+            report_problem("error", f"Codex read failed: {error}")
             payload.update(empty_codex_usage())
     if config.get("claude_enabled", True):
         try:
             payload.update(read_claude_usage())
         except Exception as error:  # noqa: BLE001
             log.error("Claude read failed: %s", error)
+            report_problem("error", f"Claude token read failed: {error}")
             payload.update(_claude_payload({key: 0 for key in CLAUDE_KEYS}))
         try:
             payload.update(read_claude_rate_limits())
         except Exception as error:  # noqa: BLE001
             log.error("Claude rate-limit read failed: %s", error)
+            report_problem("error", f"Claude usage read failed: {error}")
             payload.update(empty_claude_rate_limits())
     if rtk_bin:
         try:
             payload.update(read_rtk_usage(rtk_bin))
         except Exception as error:  # noqa: BLE001
             log.error("rtk read failed: %s", error)
+            report_problem("warn", f"rtk read failed: {error}")
             payload.update(empty_rtk_usage())
+    # Last, so it reflects every problem the reads above found.
+    payload.update(status_payload())
     return payload
 
 
