@@ -2,7 +2,7 @@
 
 [![Token Tracker demo](https://img.youtube.com/vi/VPfMYzIclb0/maxresdefault.jpg)](https://youtu.be/VPfMYzIclb0)
 
-Project version: `0.7.0`
+Project version: `0.9.0`
 
 Token Tracker collects personal AI usage — Codex, Claude Code, OpenRouter, Open
 WebUI and [rtk](https://github.com/rtk-ai/rtk) — into Home Assistant, where a
@@ -23,15 +23,17 @@ swap out the entity IDs, MQTT settings and API secrets.
   external scheduler (e.g. a Windows Scheduled Task every minute). Reads the
   local Codex and Claude Code session logs, queries Anthropic's usage endpoint
   for the real Claude rate limits, runs `rtk gain` for the savings numbers, and
-  publishes the lot over MQTT discovery.
+  publishes the lot over MQTT discovery. It renews the Claude OAuth token itself
+  when it is about to expire, so it stays headless instead of needing someone to
+  open the CLI every few hours.
 - `homeassistant/packages/tokentracker/` - Home Assistant packages that poll
   OpenRouter and Open WebUI over REST.
 
 ## Versions
 
-- Project: `0.7.0` (`VERSION`)
+- Project: `0.9.0` (`VERSION`)
 - Home Assistant package: `1.2.1`
-- Python collector: `1.2.0`
+- Python collector: `1.4.0`
 
 See `HISTORY.md` for the change log.
 

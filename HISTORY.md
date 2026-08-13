@@ -1,5 +1,50 @@
 # History
 
+## 0.9.0 - 2026-08-14
+
+### The collector renews its own Claude token
+
+- `python-collector/` (version `1.4.0`): the Claude access token lives eight
+  hours, and until now the only thing that ever renewed it was the Claude Code
+  CLI starting up. Keeping the rate-limit sensors alive therefore meant opening
+  a terminal through the day for no other purpose. `_refresh_credentials()` now
+  trades the `refreshToken` in `~/.claude/.credentials.json` for a fresh pair
+  once the access token has less than 30 minutes left, so a headless run stays
+  headless. The refresh token itself lasts weeks; when it finally expires the
+  status sensors say `Claude token refresh failed: run claude then /login`,
+  which is the only case still needing a human.
+- Leaving the Claude desktop app running never kept that token fresh, which is
+  why the ritual existed at all. Its Code mode does run the real `claude-code`
+  binary, though, so treat it as another client of the same credentials: a
+  client started *before* a refresh may hold the refresh token that rotation
+  then killed, costing a one-off `/login`. One started after reads the current
+  pair from disk and is unaffected.
+- Refresh tokens **rotate**: a successful refresh kills the one it was traded
+  for, so the rotated value must be stored or the account locks out on the next
+  attempt. Writes are atomic (temp file + `os.replace`) and rewrite the whole
+  file, because `mcpOAuth` lives in it too and dropping that would silently log
+  out every OAuth MCP server. A lock file
+  (`~/.claude/.tokentracker-refresh.lock`, stale after 120s) stops two
+  overlapping minute-runs from rotating each other's token away.
+- The canonical `_secrets_/claude-code/` copy is refreshed after each successful
+  renewal, so the fallback no longer holds a refresh token that rotation has
+  already killed.
+- The atomic rename retries on `WinError 5` (access denied). Windows hands that
+  back intermittently when a scanner still holds a handle on the file just
+  written, and it caught us in testing: the server has already rotated the token
+  by then, so losing the write is exactly the failure that costs a manual
+  `/login`. Five attempts over ~0.6s, which is nothing against an eight-hour
+  token.
+- New `python-collector/test_refresh.py` covers the refresh path offline — no
+  network, no real credentials, since a real refresh token rotates and is not
+  something a test may burn. It is what found the rename bug. Run it with
+  `.venv\Scripts\python.exe test_refresh.py`; it exits non-zero on failure.
+- The token endpoint answers **403** to a request without a `User-Agent` —
+  rejected at the edge, before the token is ever examined. In the log that looks
+  exactly like a dead refresh token while being an entirely different problem,
+  so `_post_refresh()` sends a User-Agent and logs the response body alongside
+  the status.
+
 ## 0.8.0 - 2026-08-06
 
 ### Codex rate limits were being read out of the wrong slot

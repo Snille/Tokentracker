@@ -1,6 +1,6 @@
 # TokenTracker Python Collector
 
-Version: 1.3.0
+Version: 1.4.0
 
 Token Tracker's collector. Publishes local Codex, Claude Code and rtk usage to
 Home Assistant via MQTT discovery. It reads the session logs those tools write
@@ -81,6 +81,38 @@ And rtk:
   `total_input` = `total_output` + `total_saved`, i.e. raw command output = what
   actually reached the model + what rtk stripped; the display's Sent/Saved bar
   is that split.
+
+### Claude rate limits and the OAuth token
+
+The Claude percentages do not come from the session logs — they come from the
+authenticated `GET /api/oauth/usage`, the same endpoint Claude Code's own
+statusline uses. Authentication is the `claudeAiOauth.accessToken` in
+`~/.claude/.credentials.json`, with the copy under `_secrets_/claude-code/` as a
+fallback.
+
+That access token lives eight hours. The collector renews it itself: once less
+than 30 minutes of life is left, it trades the `refreshToken` in the same file
+for a fresh pair and writes the result back atomically. Before this, the only
+thing that ever refreshed the token was the CLI starting up, so keeping the
+sensors alive meant opening a terminal through the day for no other reason.
+
+Leaving the Claude desktop app running does **not** keep this file fresh — the
+ritual existed precisely because something had to start the CLI. The app's Code
+mode does run the real `claude-code` binary (under `%APPDATA%\Claude\claude-code\`)
+and may well read the same file, so treat it as another client of these
+credentials rather than as unrelated.
+
+Two things worth knowing:
+
+- **Refresh tokens rotate.** A successful refresh kills the token it was traded
+  for. If the collector and the CLI refresh in the same moment, one of them ends
+  up holding a dead token and you need `claude` → `/login` once. The 30-minute
+  margin keeps that window to roughly one minute in eight hours; a lock file
+  (`~/.claude/.tokentracker-refresh.lock`) stops two collector runs from doing it
+  to each other.
+- **The refresh token itself expires** after a few weeks. When it does, the
+  status sensors say `Claude token refresh failed: run claude then /login` —
+  that is the one case that still needs you.
 
 This script does **not** run continuously. It is meant
 to be invoked periodically (e.g. every minute) by an external scheduler —
@@ -170,6 +202,21 @@ To remove it later:
 ```powershell
 schtasks /Delete /TN "TokenTrackerCollector" /F
 ```
+
+## Tests
+
+`test_refresh.py` covers the token refresh offline — the paths are redirected
+into a temp directory and the HTTP call is faked, because a real refresh token
+rotates when it is used and is not something a test may burn.
+
+```powershell
+.\.venv\Scripts\python.exe test_refresh.py
+```
+
+It exits non-zero on failure. Worth running before touching
+`_refresh_credentials()` or `_write_credentials()` — it is what caught the
+`WinError 5` rename failure, which only shows up intermittently and costs a
+manual `/login` when it does.
 
 Note: `Register-ScheduledTask` (the PowerShell cmdlet) can fail with
 "Access is denied" in some environments even for a task that only runs in

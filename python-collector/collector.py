@@ -49,6 +49,47 @@ CANONICAL_CREDENTIALS_PATH = (
 RATE_LIMIT_CACHE_PATH = Path.home() / ".claude" / "claude_rate_limits.json"
 OAUTH_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
+# Keeping the access token alive without a human.
+#
+# The access token lives eight hours (measured: issued 20:34, `expiresAt` 04:34).
+# Until the collector could renew it itself, the only thing that ever did was the
+# CLI starting up, so staying headless meant opening a terminal through the day
+# purely to refresh a token.
+#
+# A rotation invalidates the refresh token any already-running client loaded at
+# startup, so a client started BEFORE a refresh may be holding a dead one. A
+# client started after reads the current pair from disk and is unaffected. The
+# cost when it does bite is a one-off /login; the file on disk stays valid.
+# The credentials file also carries a `refreshToken` valid for weeks, which is
+# what the CLI itself trades in, so the collector can do the same trade.
+#
+# This is Claude Code's own public OAuth client. It is a PKCE client, so the id
+# is an identifier rather than a secret -- no client secret is involved, and the
+# refreshToken in the credentials file remains the only thing worth protecting.
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_OAUTH_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+# Identify as a client rather than as bare urllib; see _post_refresh.
+CLAUDE_OAUTH_USER_AGENT = "tokentracker-collector/1.4.0"
+# Renew only once the token is nearly spent. Refresh tokens ROTATE: a successful
+# refresh invalidates the one it was traded for, so if the collector and the CLI
+# ever refresh at the same moment, the loser is left holding a dead token and the
+# account needs a manual /login. Waiting until the last half hour keeps that
+# window small -- a run refreshes on roughly one minute in every eight hours,
+# instead of racing the CLI on every startup.
+REFRESH_MARGIN_SECONDS = 30 * 60
+# The collector runs once a minute from Task Scheduler, so two runs can overlap
+# when one is slow. Two *collector* refreshes racing each other would be the same
+# self-inflicted lockout, and unlike the CLI this side is ours to serialise.
+REFRESH_LOCK_PATH = Path.home() / ".claude" / ".tokentracker-refresh.lock"
+# A lock left behind by a killed run must not block refreshes forever. Comfortably
+# longer than a refresh (one HTTP round trip), far shorter than the token's life.
+REFRESH_LOCK_STALE_SECONDS = 120
+# Retry budget for the credentials rename; see _write_credentials. Roughly 0.6s
+# in total, which is nothing against an eight-hour token but comfortably longer
+# than a scanner holds a handle.
+REPLACE_ATTEMPTS = 5
+REPLACE_RETRY_SECONDS = 0.04
+
 # Home Assistant caps a sensor's state at 255 characters; anything longer is
 # rejected outright, so the problem sensor truncates rather than losing the state.
 MAX_STATE_LENGTH = 255
@@ -519,6 +560,214 @@ def _iso_to_epoch(value) -> float:
         return 0
 
 
+def _read_credentials(path: Path) -> dict | None:
+    """The whole credentials file as a dict, or None when it cannot be read."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except OSError:
+        return None
+    except json.JSONDecodeError as error:
+        log.warning("Claude credentials at %s are not valid JSON: %s", path, error)
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_credentials(path: Path, data: dict) -> bool:
+    """Replace `path` with `data`, atomically. True when it landed.
+
+    Written to a temporary file in the same directory and moved into place, so a
+    crash mid-write cannot leave Claude Code with a half-written credentials file
+    -- that would log out the CLI as surely as a wrong token would. `data` is the
+    complete file, not just the block we touched: the file also holds `mcpOAuth`,
+    and dropping it would silently log out every OAuth MCP server.
+    """
+    tmp = path.with_suffix(path.suffix + ".tokentracker.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+    except OSError as error:
+        log.warning("could not write credentials to %s: %s", path, error)
+        _unlink_quietly(tmp)
+        return False
+
+    # On Windows the rename intermittently fails with ERROR_ACCESS_DENIED (WinError
+    # 5) because a scanner or indexer still holds a handle on the file just
+    # written. Observed in practice, and it lands at the worst possible moment: by
+    # then the server has already rotated the token, so losing the write costs a
+    # manual /login. It clears within milliseconds, so retry briefly before
+    # treating it as fatal.
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, path)
+            return True
+        except PermissionError as error:
+            if attempt == REPLACE_ATTEMPTS - 1:
+                log.warning("could not write credentials to %s: %s", path, error)
+                break
+            time.sleep(REPLACE_RETRY_SECONDS * (attempt + 1))
+        except OSError as error:
+            log.warning("could not write credentials to %s: %s", path, error)
+            break
+    _unlink_quietly(tmp)
+    return False
+
+
+def _unlink_quietly(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _acquire_refresh_lock() -> bool:
+    """True when this run owns the refresh lock and must release it afterwards."""
+    try:
+        age = time.time() - REFRESH_LOCK_PATH.stat().st_mtime
+    except OSError:
+        age = None
+    if age is not None and age > REFRESH_LOCK_STALE_SECONDS:
+        log.info("clearing stale refresh lock (%ds old)", int(age))
+        try:
+            REFRESH_LOCK_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        # O_EXCL makes creation the atomic test-and-set; a plain exists() check
+        # would leave exactly the gap this lock exists to close.
+        fd = os.open(REFRESH_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return False
+    except OSError as error:
+        # Without a lock, skip the refresh rather than risk two at once. The
+        # token still has REFRESH_MARGIN_SECONDS of life for the next run to use.
+        log.warning("could not take refresh lock: %s", error)
+        return False
+    os.close(fd)
+    return True
+
+
+def _release_refresh_lock() -> None:
+    try:
+        REFRESH_LOCK_PATH.unlink(missing_ok=True)
+    except OSError as error:
+        log.warning("could not release refresh lock: %s", error)
+
+
+def _post_refresh(refresh_token: str) -> dict | None:
+    """Trade a refresh token for a new token pair. None on any failure."""
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLAUDE_OAUTH_CLIENT_ID,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        CLAUDE_OAUTH_TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            # Without a User-Agent, urllib sends "Python-urllib/3.x" and the edge
+            # in front of the OAuth endpoint answers 403 before the request ever
+            # reaches token validation -- a rejection that looks exactly like a
+            # dead refresh token in the log but has nothing to do with the token.
+            "User-Agent": CLAUDE_OAUTH_USER_AGENT,
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.load(resp)
+    except urllib.error.HTTPError as error:
+        # 400/401 here means the refresh token itself is dead -- rotated out from
+        # under us, revoked, or expired. No amount of retrying fixes that, and the
+        # caller turns it into a problem sensor rather than a silent freeze. The
+        # body is logged because the status alone does not separate that from an
+        # edge/WAF rejection, which needs a completely different fix.
+        detail = ""
+        try:
+            detail = error.read(500).decode("utf-8", "replace").strip()
+        except Exception:
+            pass
+        log.warning("token refresh rejected: %s %s", error, detail)
+        return None
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as error:
+        log.warning("token refresh failed: %s", error)
+        return None
+    if not isinstance(payload, dict) or not payload.get("access_token"):
+        log.warning("token refresh returned no access_token")
+        return None
+    return payload
+
+
+def _refresh_credentials() -> bool:
+    """Renew the access token in place when it is nearly expired.
+
+    Returns True only when a refresh actually happened. Nothing to do (token
+    still fresh, no refresh token, lock held elsewhere) is not a failure and
+    reports nothing -- the caller carries on with the existing token.
+    """
+    data = _read_credentials(CREDENTIALS_PATH)
+    oauth = (data or {}).get("claudeAiOauth")
+    if not data or not isinstance(oauth, dict):
+        return False
+    refresh_token = oauth.get("refreshToken")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        return False
+    expires_at = numeric(oauth.get("expiresAt")) / 1000
+    if expires_at and expires_at - time.time() > REFRESH_MARGIN_SECONDS:
+        return False
+
+    if not _acquire_refresh_lock():
+        log.info("another run holds the refresh lock; leaving the token to it")
+        return False
+    try:
+        # Re-read under the lock: a run that was waiting on the lock would
+        # otherwise trade the token the winner has already rotated away.
+        data = _read_credentials(CREDENTIALS_PATH) or data
+        oauth = dict(data.get("claudeAiOauth") or oauth)
+        refresh_token = oauth.get("refreshToken") or refresh_token
+        expires_at = numeric(oauth.get("expiresAt")) / 1000
+        if expires_at and expires_at - time.time() > REFRESH_MARGIN_SECONDS:
+            return False
+
+        payload = _post_refresh(refresh_token)
+        if payload is None:
+            report_problem("error", "Claude token refresh failed: run claude then /login")
+            return False
+
+        oauth["accessToken"] = payload["access_token"]
+        # A rotated refresh token MUST be stored; keeping the old one would work
+        # exactly once more and then lock the account out.
+        if payload.get("refresh_token"):
+            oauth["refreshToken"] = payload["refresh_token"]
+        expires_in = numeric(payload.get("expires_in"))
+        if expires_in:
+            oauth["expiresAt"] = int((time.time() + expires_in) * 1000)
+        data["claudeAiOauth"] = oauth
+        if not _write_credentials(CREDENTIALS_PATH, data):
+            # The new pair exists server-side but never reached disk, and the old
+            # refresh token is now dead. Say so loudly: this is the one failure
+            # that genuinely costs a manual login.
+            report_problem("error", "Claude token refreshed but not saved: run claude then /login")
+            return False
+    finally:
+        _release_refresh_lock()
+
+    log.info("refreshed the Claude access token (valid for %ss)", int(expires_in) or "?")
+    # Keep the canonical secret-store copy in step, so the fallback stays usable
+    # instead of holding a refresh token that rotation has already killed.
+    try:
+        CANONICAL_CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(CREDENTIALS_PATH, CANONICAL_CREDENTIALS_PATH)
+    except OSError as error:
+        log.warning("could not update the canonical credentials copy: %s", error)
+        report_problem("warn", "Claude: backup credentials copy is out of date")
+    return True
+
+
 def _token_from(path: Path) -> str | None:
     """The `claudeAiOauth.accessToken` in one credentials file, or None.
 
@@ -546,7 +795,11 @@ def _oauth_access_token() -> str | None:
     Prefers the live credentials Claude Code maintains; falls back to the
     canonical copy in the central secret store. Exhausting both is logged, since
     it means the rate-limit sensors are about to freeze.
+
+    Renews the token first when it is close to expiring, so a headless run never
+    has to wait for someone to open the CLI.
     """
+    _refresh_credentials()
     for path in (CREDENTIALS_PATH, CANONICAL_CREDENTIALS_PATH):
         token = _token_from(path)
         if token:
