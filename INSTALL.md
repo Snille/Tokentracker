@@ -21,7 +21,7 @@ Token Tracker has two parts:
 - The collector in `python-collector/`, which publishes local Codex, Claude Code
   and rtk counters to MQTT discovery. It is scheduled externally, e.g. every
   minute via a Windows Scheduled Task.
-- Home Assistant packages for OpenRouter / Open WebUI in
+- The Home Assistant package for OpenRouter in
   `homeassistant/packages/tokentracker/`.
 
 ## 1. Clone the repo
@@ -104,23 +104,6 @@ unique key labels and do not double-count the same key.
 If you do not want to use OpenRouter at all, either skip / remove
 `openrouter.yaml`, or add dummy secrets and accept that the sensors will be
 zero / unavailable.
-
-### Open WebUI
-
-If you want to use the Open WebUI pages, add:
-
-```yaml
-openwebui_bearer: "Bearer eyJhbGciOi..."
-openwebui_users_url: "http://your-openwebui:8080/api/v1/users/"
-openwebui_chats_url: "http://your-openwebui:8080/api/v1/chats/all/db"
-openwebui_analytics_url: "http://your-openwebui:8080/api/v1/analytics/users"
-openwebui_tokens_today_url: >-
-  http://your-openwebui:8080/api/v1/analytics/tokens?start_date={{ now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() | int }}&end_date={{ now().timestamp() | int }}
-```
-
-If you do not want to use Open WebUI, either skip / remove `openwebui.yaml`,
-or add dummy secrets / URLs and accept that the sensors will be zero /
-unavailable.
 
 Restart Home Assistant after secrets and packages are in place.
 
@@ -268,18 +251,6 @@ sensor.openrouter_activity_prompt_tokens
 sensor.openrouter_activity_completion_tokens
 ```
 
-For Open WebUI:
-
-```text
-sensor.openwebui_tokens_today
-sensor.openwebui_input_tokens_today
-sensor.openwebui_output_tokens_today
-sensor.openwebui_chats_today
-sensor.openwebui_active_users
-sensor.openwebui_models_today
-sensor.openwebui_output_token_percent_today
-```
-
 ## 7. Troubleshooting
 
 ### Collector sensors are missing
@@ -311,7 +282,7 @@ sensor.openwebui_output_token_percent_today
   `~/.claude/.credentials.json` has expired — run Claude Code once to refresh it.
 - `HTTP Error 429` means the endpoint is rate-limiting the poll.
 
-### OpenRouter / Open WebUI shows zero
+### OpenRouter shows zero
 
 - Check `secrets.yaml`.
 - Check that HA can reach the endpoints.

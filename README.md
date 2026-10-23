@@ -2,10 +2,10 @@
 
 [![Token Tracker demo](https://img.youtube.com/vi/VPfMYzIclb0/maxresdefault.jpg)](https://youtu.be/VPfMYzIclb0)
 
-Project version: `0.9.0`
+Project version: `0.10.0`
 
-Token Tracker collects personal AI usage — Codex, Claude Code, OpenRouter, Open
-WebUI and [rtk](https://github.com/rtk-ai/rtk) — into Home Assistant, where a
+Token Tracker collects personal AI usage — Codex, Claude Code, OpenRouter and
+[rtk](https://github.com/rtk-ai/rtk) — into Home Assistant, where a
 small round ESPHome display shows it on the wall.
 
 **This repo is the data pipeline only.** It gathers the numbers and publishes
@@ -26,12 +26,12 @@ swap out the entity IDs, MQTT settings and API secrets.
   publishes the lot over MQTT discovery. It renews the Claude OAuth token itself
   when it is about to expire, so it stays headless instead of needing someone to
   open the CLI every few hours.
-- `homeassistant/packages/tokentracker/` - Home Assistant packages that poll
-  OpenRouter and Open WebUI over REST.
+- `homeassistant/packages/tokentracker/` - Home Assistant package that polls
+  OpenRouter over REST.
 
 ## Versions
 
-- Project: `0.9.0` (`VERSION`)
+- Project: `0.10.0` (`VERSION`)
 - Home Assistant package: `1.2.1`
 - Python collector: `1.4.0`
 
@@ -50,7 +50,6 @@ display compute maxima, remaining amounts and percentages.
 | Codex | `sensor.tokentracker_codex_tokens_week` | The collector reads local Codex sessions/SQLite and publishes weekly tokens via MQTT |
 | Claude Code | `sensor.tokentracker_claude_code_tokens_week` | The collector reads local Claude JSONL logs and publishes weekly tokens via MQTT |
 | Claude limits | `sensor.tokentracker_claude_code_5h_used_percent` | The Python collector queries `GET /api/oauth/usage` for the real subscription rate limits |
-| Open WebUI | `sensor.openwebui_tokens_today` | The HA REST package fetches tokens for today from Open WebUI analytics |
 | OpenRouter | `sensor.openrouter_balance_remaining`, `sensor.openrouter_usage_percent` | The HA REST package fetches account credits and usage from OpenRouter |
 | rtk | `sensor.tokentracker_rtk_saved_tokens_total` and ten more `tokentracker_rtk_*` | The Python collector runs `rtk gain --all --format json` and publishes the savings summary |
 | Collector health | `sensor.tokentracker_status`, `sensor.tokentracker_problem`, `sensor.tokentracker_problem_count` | The collector reports on itself, so a frozen number is distinguishable from a healthy one |
@@ -104,8 +103,8 @@ built and flashed with the toolchain that lives there.
 
 Current hardware: Waveshare ESP32-S3-Touch-LCD-1.28 — a round 240x240 GC9A01
 LCD with CST816 touch and a QMI8658 IMU. It shows a clock, one screen each for
-Codex, Claude Code, OpenRouter, Open WebUI and rtk, and a 2x2 overview with an
-rtk savings rate in the middle. Swipe to page, tap a tile on the overview to
+Codex, Claude Code, OpenRouter and rtk, and an overview split into four
+quarters (Codex, Claude, OpenRouter, rtk). Swipe to page, tap a tile on the overview to
 jump to it.
 
 An earlier 466x466 AMOLED version (Waveshare ESP32-S3 Touch AMOLED 1.75) used to
@@ -169,4 +168,3 @@ reference implementation. Anyone else using it will at least need to change:
 - Home Assistant entity IDs.
 - MQTT broker and credentials.
 - OpenRouter secrets.
-- Open WebUI URLs and admin bearer.

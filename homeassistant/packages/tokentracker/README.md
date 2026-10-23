@@ -1,14 +1,12 @@
 # TokenTracker Home Assistant Package
 
-Package version: `1.2.1`
+Package version: `1.3.0`
 
-This package contains Home Assistant REST/template sensors for the parts that
-do not come from the local collector:
+This package contains Home Assistant REST/template sensors for the part that
+does not come from the local collector:
 
 - OpenRouter credits, account balance, multi-key usage and activity token
   history.
-- Open WebUI usage/statistics including input/output tokens, model count and
-  today's I/O percent.
 
 Codex, Claude Code and rtk come from `python-collector/` via MQTT discovery:
 
@@ -109,59 +107,6 @@ OpenRouter `/activity` is historical token statistics for completed UTC days,
 not a live "today" counter. The prompt/completion values are therefore used as
 history on the detail page and I/O Mix, while account balance / key limit /
 cost are used for live display values.
-
-## Open WebUI
-
-`openwebui.yaml` requires a bearer from an Open WebUI admin account.
-
-Add to `/config/secrets.yaml`:
-
-```yaml
-openwebui_bearer: "Bearer eyJhbGciOi..."
-openwebui_users_url: "http://llm.example.net:8080/api/v1/users/"
-openwebui_chats_url: "http://llm.example.net:8080/api/v1/chats/all/db"
-openwebui_analytics_url: "http://llm.example.net:8080/api/v1/analytics/users"
-openwebui_tokens_today_url: >-
-  http://llm.example.net:8080/api/v1/analytics/tokens?start_date={{ now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp() | int }}&end_date={{ now().timestamp() | int }}
-```
-
-Endpoints used:
-
-- `GET /api/v1/users/`
-- `GET /api/v1/chats/all/db`
-- `GET /api/v1/analytics/users`
-- `GET /api/v1/analytics/tokens`
-
-Exposed sensors:
-
-- `sensor.openwebui_total_users`
-- `sensor.openwebui_active_users`
-- `sensor.openwebui_total_chats`
-- `sensor.openwebui_chats_today`
-- `sensor.openwebui_top_model`
-- `sensor.openwebui_models_used_week`
-- `sensor.openwebui_messages_total`
-- `sensor.openwebui_tokens_total`
-- `sensor.openwebui_tokens_today`
-- `sensor.openwebui_input_tokens_today`
-- `sensor.openwebui_output_tokens_today`
-- `sensor.openwebui_models_today`
-- `sensor.openwebui_input_token_percent_today`
-- `sensor.openwebui_output_token_percent_today`
-
-The display normally uses:
-
-- `sensor.openwebui_tokens_today`
-- `sensor.openwebui_input_tokens_today`
-- `sensor.openwebui_output_tokens_today`
-- `sensor.openwebui_chats_today`
-- `sensor.openwebui_active_users`
-- `sensor.openwebui_models_today`
-- `sensor.openwebui_output_token_percent_today`
-
-`/chats/all/db` can be heavy on large installations and is therefore polled
-every 5 minutes. Open WebUI has no clean "currently connected users" endpoint,
-so `active_users` is counted from `last_active_at` over the last 5 minutes.
 
 ## Old entities
 

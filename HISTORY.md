@@ -1,5 +1,17 @@
 # History
 
+## 0.10.0 - 2026-10-23
+
+### Open WebUI removed
+
+- `homeassistant/packages/tokentracker/openwebui.yaml` is deleted (package
+  version `1.3.0`). Open WebUI had no traffic since the end of August, so its
+  REST and template sensors only polled an idle server. The package is also
+  removed from `/config/packages/tokentracker/` in Home Assistant and its 14
+  `sensor.openwebui_*` entities are deleted from the registry. The display
+  dropped its Open WebUI screen in the same change (ESPHome repo, v1.9.0).
+  The collector never read Open WebUI, so it is unchanged.
+
 ## 0.9.0 - 2026-08-14
 
 ### The collector renews its own Claude token
